@@ -1,0 +1,7 @@
+(executable
+ (name git_print_object)
+ (libraries
+  async
+  core
+  git_object_store_lib)
+ (preprocess (pps ppx_jane)))
