@@ -1,0 +1,11 @@
+(library
+ (name git_object_store_lib)
+ (libraries
+  async
+  core
+  digestif.c
+  expect_test_helpers)
+ (c_names crc32_stubs zlib_stubs)
+ (c_library_flags (-lz))
+ (inline_tests)
+ (preprocess (pps ppx_jane)))
