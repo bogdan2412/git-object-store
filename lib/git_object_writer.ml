@@ -25,6 +25,7 @@ module Raw : sig
   val init_or_reset : t -> unit Deferred.t
   val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
   val finalise : t -> Sha1.Raw.t Deferred.t
+  val abort : t -> unit Deferred.t
 end = struct
   type t =
     { destination_directory : string
@@ -32,6 +33,7 @@ end = struct
     ; mutable writer : Writer.t
     ; mutable sha1_compute : [`Initialised] Sha1.Compute.t
     ; zlib_deflate : Zlib.Deflate.t
+    ; mutable initialised : bool
     }
 
   let create_uninitialised ~destination_directory =
@@ -51,6 +53,7 @@ end = struct
         ; destination_directory
         ; temp_file_name
         ; writer
+        ; initialised = false
         }
     in
     Lazy.force t
@@ -64,15 +67,22 @@ end = struct
     t.temp_file_name <- temp_file_name;
     t.writer <- writer;
     Zlib.Deflate.init_or_reset t.zlib_deflate;
-    t.sha1_compute <- Sha1.Compute.init_or_reset t.sha1_compute
+    t.sha1_compute <- Sha1.Compute.init_or_reset t.sha1_compute;
+    t.initialised <- true
+  ;;
+
+  let assert_initialised t =
+    if not t.initialised then failwith "Git_object_writer used while not initialised"
   ;;
 
   let append_data t buf ~pos ~len =
+    assert_initialised t;
     Zlib.Deflate.process t.zlib_deflate buf ~pos ~len;
     Sha1.Compute.process t.sha1_compute buf ~pos ~len
   ;;
 
   let finalise t =
+    assert_initialised t;
     Zlib.Deflate.finalise t.zlib_deflate;
     let%bind () = Writer.flushed t.writer in
     let%bind () = Writer.close t.writer in
@@ -84,10 +94,21 @@ end = struct
       ( Filename.concat t.destination_directory (String.sub str ~pos:0 ~len:2)
       , String.sub str ~pos:2 ~len:(Sha1.Hex.length - 2) )
     in
-    let%bind () = Unix.mkdir dir in
+    let%bind () = Unix.mkdir ~p:() dir in
     let new_path = Filename.concat dir file in
     let%map () = Sys.rename t.temp_file_name new_path in
+    t.initialised <- false;
     sha1_raw
+  ;;
+
+  let abort t =
+    if t.initialised
+    then (
+      let%bind () = Writer.flushed t.writer in
+      let%bind () = Writer.close t.writer in
+      let%map () = Unix.unlink t.temp_file_name in
+      t.initialised <- false)
+    else Deferred.unit
   ;;
 end
 
@@ -115,6 +136,7 @@ module For_unknown_contents_size : sig
   val len : t -> int
   val advance_pos : t -> by:int -> unit
   val finalise : t -> Sha1.Raw.t Deferred.t
+  val abort : t -> unit Deferred.t
 end = struct
   type t =
     { raw : Raw.t
@@ -178,6 +200,8 @@ end = struct
     Raw.append_data t.raw t.buf ~pos ~len;
     Raw.finalise t.raw
   ;;
+
+  let abort t = Raw.abort t.raw
 end
 
 module Commit_ = Commit
@@ -273,6 +297,7 @@ module Tree = struct
   ;;
 
   let finalise t = For_unknown_contents_size.finalise t
+  let abort t = For_unknown_contents_size.abort t
 end
 
 module Blob = struct
@@ -297,6 +322,7 @@ module Blob = struct
     ;;
 
     let finalise t = For_unknown_contents_size.finalise t
+    let abort t = For_unknown_contents_size.abort t
   end
 
   module Known_size = struct
@@ -344,6 +370,8 @@ module Blob = struct
               ~written:(t.written : int)];
       Raw.finalise t.raw
     ;;
+
+    let abort t = Raw.abort t.raw
   end
 end
 

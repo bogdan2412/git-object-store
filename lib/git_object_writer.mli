@@ -32,6 +32,7 @@ module Raw : sig
   val init_or_reset : t -> unit Deferred.t
   val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
   val finalise : t -> Sha1.Raw.t Deferred.t
+  val abort : t -> unit Deferred.t
 end
 
 module For_unknown_contents_size : sig
@@ -51,6 +52,7 @@ module For_unknown_contents_size : sig
   val len : t -> int
   val advance_pos : t -> by:int -> unit
   val finalise : t -> Sha1.Raw.t Deferred.t
+  val abort : t -> unit Deferred.t
 end
 
 module Commit : sig
@@ -85,6 +87,7 @@ module Tree : sig
   val write_tree_line : t -> File_mode.t -> Sha1.Raw.t -> name:string -> unit
   val write_tree_line' : t -> File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit
   val finalise : t -> Sha1.Raw.t Deferred.t
+  val abort : t -> unit Deferred.t
 end
 
 module Blob : sig
@@ -95,6 +98,7 @@ module Blob : sig
     val init_or_reset : t -> unit Deferred.t
     val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
     val finalise : t -> Sha1.Raw.t Deferred.t
+    val abort : t -> unit Deferred.t
   end
 
   module Known_size : sig
@@ -104,5 +108,6 @@ module Blob : sig
     val init_or_reset : t -> length:int -> unit Deferred.t
     val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
     val finalise : t -> Sha1.Raw.t Deferred.t
+    val abort : t -> unit Deferred.t
   end
 end
