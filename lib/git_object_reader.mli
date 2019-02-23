@@ -35,6 +35,16 @@ val create
     relevant callbacks out of those specified in [create]. *)
 val read_file : t -> file:string -> unit Deferred.t
 
+(** [read_file] reads the given git object file from disk and calls the
+    relevant callbacks out of those specified in [create]. The [push_back]
+    callback is called every time we read a chunk of data from the file
+    and it gives the client an opportunity to push back on reading. *)
+val read_file'
+  :  t
+  -> file:string
+  -> push_back:(unit -> unit Deferred.t)
+  -> unit Deferred.t
+
 (** Change the callback that gets called while parsing [blob] objects. *)
 val set_on_blob
   :  t

@@ -41,7 +41,7 @@ let create ~on_blob_size ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag ~on_err
   { git_object_parser; zlib_inflate; on_error }
 ;;
 
-let read_file t ~file =
+let read_file' t ~file ~push_back =
   Git_object_parser.reset t.git_object_parser;
   Zlib.Inflate.init_or_reset t.zlib_inflate;
   match%map
@@ -50,7 +50,9 @@ let read_file t ~file =
         let consumed = Zlib.Inflate.process t.zlib_inflate buf ~pos ~len in
         if consumed <> len
         then return (`Stop_consumed ((), consumed))
-        else return `Continue))
+        else (
+          let%map () = push_back () in
+          `Continue)))
   with
   | `Eof ->
     Zlib.Inflate.finalise t.zlib_inflate;
@@ -59,6 +61,8 @@ let read_file t ~file =
     t.on_error (Error.of_string "Read left unconsumed input")
   | `Stopped () -> t.on_error (Error.of_string "Read stopped before EOF")
 ;;
+
+let read_file t ~file = read_file' t ~file ~push_back:(Fn.const Deferred.unit)
 
 let set_on_blob t ~on_size ~on_chunk =
   Git_object_parser.set_on_blob t.git_object_parser ~on_size ~on_chunk
