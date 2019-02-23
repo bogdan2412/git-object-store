@@ -102,6 +102,7 @@ end = struct
   let create () =
     let git_object_parser =
       Git_object_parser.create
+        ~on_blob_size:(fun (_ : int) -> ())
         ~on_blob_chunk:(fun (_ : Bigstring.t) ~pos:(_ : int) ~len:(_ : int) -> ())
         ~on_commit:(fun (_ : Commit.t) -> ())
         ~on_tree_line:
@@ -119,7 +120,10 @@ end = struct
   let reset_for_blob t ~payload_length ~on_blob_chunk =
     Zlib.Inflate.init_or_reset t.zlib_inflate;
     Git_object_parser.reset t.git_object_parser;
-    Git_object_parser.set_on_blob_chunk t.git_object_parser on_blob_chunk;
+    Git_object_parser.set_on_blob
+      t.git_object_parser
+      ~on_size:ignore
+      ~on_chunk:on_blob_chunk;
     Git_object_parser.set_state_reading_blob t.git_object_parser ~payload_length
   ;;
 
@@ -294,6 +298,7 @@ end = struct
   let create () =
     let git_object_parser =
       Git_object_parser.create
+        ~on_blob_size:(fun (_ : int) -> ())
         ~on_blob_chunk:(fun (_ : Bigstring.t) ~pos:(_ : int) ~len:(_ : int) -> ())
         ~on_commit:(fun (_ : Commit.t) -> ())
         ~on_tree_line:
@@ -395,7 +400,10 @@ end = struct
          t.git_object_parser
          ~payload_length:t.result_len
      | Blob ->
-       Git_object_parser.set_on_blob_chunk t.git_object_parser on_blob_chunk;
+       Git_object_parser.set_on_blob
+         t.git_object_parser
+         ~on_size:ignore
+         ~on_chunk:on_blob_chunk;
        Git_object_parser.set_state_reading_blob
          t.git_object_parser
          ~payload_length:t.result_len

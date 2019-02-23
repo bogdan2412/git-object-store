@@ -22,7 +22,8 @@ type t [@@deriving sexp_of]
 (** [create] returns a new parser that can be fed git object data incrementally and
     reused to parse multiple git objects. *)
 val create
-  :  on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
+  :  on_blob_size:(int -> unit)
+  -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
   -> on_commit:(Commit.t -> unit)
   -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
   -> on_tag:(Tag.t -> unit)
@@ -58,7 +59,11 @@ val set_state_reading_tree : t -> payload_length:int -> unit
 val set_state_reading_tag : t -> payload_length:int -> unit
 
 (** Change the callback that gets called while parsing [blob] objects. *)
-val set_on_blob_chunk : t -> (Bigstring.t -> pos:int -> len:int -> unit) -> unit
+val set_on_blob
+  :  t
+  -> on_size:(int -> unit)
+  -> on_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
+  -> unit
 
 (** Change the callback that gets called while parsing [commit] objects. *)
 val set_on_commit : t -> (Commit.t -> unit) -> unit

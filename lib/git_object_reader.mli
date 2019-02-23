@@ -23,7 +23,8 @@ type t
 (** [create] returns a new reader that can be used for reading for parsing
     multiple git object files from disk. *)
 val create
-  :  on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
+  :  on_blob_size:(int -> unit)
+  -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
   -> on_commit:(Commit.t -> unit)
   -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
   -> on_tag:(Tag.t -> unit)
@@ -35,7 +36,11 @@ val create
 val read_file : t -> file:string -> unit Deferred.t
 
 (** Change the callback that gets called while parsing [blob] objects. *)
-val set_on_blob_chunk : t -> (Bigstring.t -> pos:int -> len:int -> unit) -> unit
+val set_on_blob
+  :  t
+  -> on_size:(int -> unit)
+  -> on_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
+  -> unit
 
 (** Change the callback that gets called while parsing [commit] objects. *)
 val set_on_commit : t -> (Commit.t -> unit) -> unit

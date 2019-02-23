@@ -23,6 +23,7 @@ let read_git_object file =
   Monitor.try_with_or_error ~extract_exn:true (fun () ->
     let git_object_reader =
       Git_object_reader.create
+        ~on_blob_size:(fun (_ : int) -> ())
         ~on_blob_chunk:(fun buf ~pos ~len ->
           Writer.write_bigstring (force Writer.stdout) ~pos ~len buf)
         ~on_commit:(fun commit -> printf !"%{sexp: Commit.t}\n" commit)

@@ -24,9 +24,15 @@ type t =
   ; on_error : Error.t -> unit
   }
 
-let create ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag ~on_error =
+let create ~on_blob_size ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag ~on_error =
   let git_object_parser =
-    Git_object_parser.create ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag ~on_error
+    Git_object_parser.create
+      ~on_blob_size
+      ~on_blob_chunk
+      ~on_commit
+      ~on_tree_line
+      ~on_tag
+      ~on_error
   in
   let zlib_inflate =
     Zlib.Inflate.create_uninitialised
@@ -54,8 +60,8 @@ let read_file t ~file =
   | `Stopped () -> t.on_error (Error.of_string "Read stopped before EOF")
 ;;
 
-let set_on_blob_chunk t on_blob_chunk =
-  Git_object_parser.set_on_blob_chunk t.git_object_parser on_blob_chunk
+let set_on_blob t ~on_size ~on_chunk =
+  Git_object_parser.set_on_blob t.git_object_parser ~on_size ~on_chunk
 ;;
 
 let set_on_commit t on_commit =
@@ -73,6 +79,7 @@ module Expect_test_helpers = struct
 
   let blob_reader () =
     create
+      ~on_blob_size:(fun size -> printf "Blob size: %d\n" size)
       ~on_blob_chunk:(fun buf ~pos ~len ->
         printf "Blob chunk: %s\n" (Bigstring.To_string.sub buf ~pos ~len))
       ~on_commit:(fun _ -> failwith "Expected blob")
@@ -83,6 +90,7 @@ module Expect_test_helpers = struct
 
   let commit_reader () =
     create
+      ~on_blob_size:(fun _ -> failwith "Expected commit")
       ~on_blob_chunk:(fun _ ~pos:_ ~len:_ -> failwith "Expected commit")
       ~on_commit:(fun commit -> printf !"%{sexp: Commit.t}\n" commit)
       ~on_tree_line:(fun _ _ ~name:_ -> failwith "Expected commit")
@@ -92,6 +100,7 @@ module Expect_test_helpers = struct
 
   let tree_reader () =
     create
+      ~on_blob_size:(fun _ -> failwith "Expected tree")
       ~on_blob_chunk:(fun _ ~pos:_ ~len:_ -> failwith "Expected tree")
       ~on_commit:(fun _ -> failwith "Expected tree")
       ~on_tree_line:(fun mode sha1 ~name ->
@@ -106,6 +115,7 @@ module Expect_test_helpers = struct
 
   let tag_reader () =
     create
+      ~on_blob_size:(fun _ -> failwith "Expected tag")
       ~on_blob_chunk:(fun _ ~pos:_ ~len:_ -> failwith "Expected tag")
       ~on_commit:(fun _ -> failwith "Expected tag")
       ~on_tree_line:(fun _ _ ~name:_ -> failwith "Expected tag")
@@ -124,7 +134,9 @@ let%expect_test "file blob object" =
         ~contents:"x\001K\202\201OR04dH\203,*.QH\203\204I\229\002\000=7\006\020"
     in
     let%bind () = read_file t ~file in
-    [%expect {| Blob chunk: first file |}])
+    [%expect {|
+      Blob size: 11
+      Blob chunk: first file |}])
 ;;
 
 let%expect_test "link blob object" =
@@ -135,7 +147,9 @@ let%expect_test "link blob object" =
       Writer.save file ~contents:"x\001K\202\201OR0fH\214O\001\000\017z\002\233"
     in
     let%bind () = read_file t ~file in
-    [%expect {| Blob chunk: c/d |}])
+    [%expect {|
+      Blob size: 3
+      Blob chunk: c/d |}])
 ;;
 
 let%expect_test "commit object" =
