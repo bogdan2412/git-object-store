@@ -383,7 +383,9 @@ let%expect_test "write known_size blob" =
       [%expect {| "x\156K\202\201OR04dH\203,*.QH\203\204I\229\002\000=7\006\020" |}]
     in
     let%bind () = Git_object_reader.read_file reader ~file:expected_file_path in
-    let%bind () = [%expect {| Blob chunk: first file |}] in
+    let%bind () = [%expect {|
+      Blob size: 11
+      Blob chunk: first file |}] in
     let%bind () = write_blob "second file\n" in
     let%bind () = [%expect {| 1c59427adc4b205a270d8f810310394962e79a8b |}] in
     let expected_file_path =
@@ -396,7 +398,9 @@ let%expect_test "write known_size blob" =
         {| "x\156K\202\201OR04b(NM\206\207KQH\203\204I\229\002\000C\209\006i" |}]
     in
     let%bind () = Git_object_reader.read_file reader ~file:expected_file_path in
-    [%expect {| Blob chunk: second file |}])
+    [%expect {|
+      Blob size: 12
+      Blob chunk: second file |}])
 ;;
 
 let%expect_test "write unknown_size blob" =
@@ -424,7 +428,9 @@ let%expect_test "write unknown_size blob" =
       [%expect {| "x\156K\202\201OR04dH\203,*.QH\203\204I\229\002\000=7\006\020" |}]
     in
     let%bind () = Git_object_reader.read_file reader ~file:expected_file_path in
-    let%bind () = [%expect {| Blob chunk: first file |}] in
+    let%bind () = [%expect {|
+      Blob size: 11
+      Blob chunk: first file |}] in
     let%bind () = write_blob "second file\n" in
     let%bind () = [%expect {| 1c59427adc4b205a270d8f810310394962e79a8b |}] in
     let expected_file_path =
@@ -437,7 +443,9 @@ let%expect_test "write unknown_size blob" =
         {| "x\156K\202\201OR04b(NM\206\207KQH\203\204I\229\002\000C\209\006i" |}]
     in
     let%bind () = Git_object_reader.read_file reader ~file:expected_file_path in
-    [%expect {| Blob chunk: second file |}])
+    [%expect {|
+      Blob size: 12
+      Blob chunk: second file |}])
 ;;
 
 let%expect_test "write commit" =

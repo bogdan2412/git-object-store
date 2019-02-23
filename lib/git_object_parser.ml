@@ -131,6 +131,7 @@ type t =
   ; mutable len : int
   ; mutable total_payload_read : int
   ; state : State.t
+  ; mutable on_blob_size : int -> unit
   ; mutable on_blob_chunk : Bigstring.t -> pos:int -> len:int -> unit
   ; mutable on_commit : Commit.t -> unit
   ; mutable on_tree_line : File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit
@@ -145,6 +146,7 @@ let sexp_of_t
       ; len
       ; total_payload_read
       ; state
+      ; on_blob_size = _
       ; on_blob_chunk = _
       ; on_commit = _
       ; on_tree_line = _
@@ -159,7 +161,14 @@ let sexp_of_t
     }]
 ;;
 
-let create ~initial_buffer_size ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag ~on_error
+let create
+      ~initial_buffer_size
+      ~on_blob_size
+      ~on_blob_chunk
+      ~on_commit
+      ~on_tree_line
+      ~on_tag
+      ~on_error
   =
   let rec state =
     lazy
@@ -176,6 +185,7 @@ let create ~initial_buffer_size ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag 
       ; len = 0
       ; total_payload_read = 0
       ; state = force state
+      ; on_blob_size
       ; on_blob_chunk
       ; on_commit
       ; on_tree_line
@@ -186,6 +196,11 @@ let create ~initial_buffer_size ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag 
   force t
 ;;
 
+let set_on_blob t ~on_size ~on_chunk =
+  t.on_blob_size <- on_size;
+  t.on_blob_chunk <- on_chunk
+;;
+
 let reset t =
   Fields.Direct.iter
     t
@@ -194,6 +209,7 @@ let reset t =
     ~len:(fun _ t _ -> t.len <- 0)
     ~total_payload_read:(fun _ t _ -> t.total_payload_read <- 0)
     ~state:(fun _ t _ -> State.set_before_type_read t.state)
+    ~on_blob_size:(fun _ _ _ -> ())
     ~on_blob_chunk:(fun _ _ _ -> ())
     ~on_commit:(fun _ _ _ -> ())
     ~on_tree_line:(fun _ _ _ -> ())
@@ -207,7 +223,8 @@ let error t error =
 ;;
 
 let set_state_reading_blob t ~payload_length =
-  State.set_reading_blob t.state ~payload_length
+  State.set_reading_blob t.state ~payload_length;
+  t.on_blob_size payload_length
 ;;
 
 let set_state_reading_tree t ~payload_length =
@@ -405,6 +422,7 @@ let%expect_test "reading header" =
     let t =
       create
         ~initial_buffer_size:1
+        ~on_blob_size:(fun _ -> ())
         ~on_blob_chunk:(fun _ ~pos:_ ~len:_ -> ())
         ~on_commit:(fun _ -> ())
         ~on_tree_line:(fun _ _ ~name:_ -> ())
@@ -483,6 +501,7 @@ let%expect_test "read blob" =
   let new_t () =
     create
       ~initial_buffer_size:1
+      ~on_blob_size:(fun size -> printf "Blob size: %d\n" size)
       ~on_blob_chunk:(fun buf ~pos ~len ->
         printf "Blob chunk: %s\n" (Bigstring.To_string.sub buf ~pos ~len))
       ~on_commit:(fun _ -> failwith "Expected blob")
@@ -496,6 +515,7 @@ let%expect_test "read blob" =
   printf !"%{sexp: t}\n" t;
   [%expect
     {|
+        Blob size: 16
         Blob chunk: 1a2a3a4a5a6a7a8a
         ((data "") (total_payload_read 16) (state Done)) |}];
   let t = new_t () in
@@ -506,6 +526,7 @@ let%expect_test "read blob" =
   printf !"%{sexp: t}\n" t;
   [%expect
     {|
+        Blob size: 16
         Blob chunk: 1
         Blob chunk: a
         Blob chunk: 2
@@ -536,6 +557,7 @@ let%expect_test "read commit" =
   let new_t () =
     create
       ~initial_buffer_size:1
+      ~on_blob_size:(fun _ -> failwith "Expected commit")
       ~on_blob_chunk:(fun _ ~pos:_ ~len:_ -> failwith "Expected commit")
       ~on_commit:(fun commit -> printf !"%{sexp: Commit.t}\n" commit)
       ~on_tree_line:(fun _ _ ~name:_ -> failwith "Expected commit")
@@ -630,6 +652,7 @@ let%expect_test "read tree" =
   let new_t () =
     create
       ~initial_buffer_size:1
+      ~on_blob_size:(fun _ -> failwith "Expected tree")
       ~on_blob_chunk:(fun _ ~pos:_ ~len:_ -> failwith "Expected tree")
       ~on_commit:(fun _ -> failwith "Expected tree")
       ~on_tree_line:(fun mode sha1 ~name ->
@@ -678,6 +701,7 @@ let%expect_test "read tag" =
   let new_t () =
     create
       ~initial_buffer_size:1
+      ~on_blob_size:(fun _ -> failwith "Expected tag")
       ~on_blob_chunk:(fun _ ~pos:_ ~len:_ -> failwith "Expected tag")
       ~on_commit:(fun _ -> failwith "Expected tag")
       ~on_tree_line:(fun _ _ ~name:_ -> failwith "Expected tag")
