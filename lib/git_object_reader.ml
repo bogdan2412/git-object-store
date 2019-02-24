@@ -49,20 +49,28 @@ let read_file' t ~file ~push_back =
       Reader.read_one_chunk_at_a_time reader ~handle_chunk:(fun buf ~pos ~len ->
         let consumed = Zlib.Inflate.process t.zlib_inflate buf ~pos ~len in
         if consumed <> len
-        then return (`Stop_consumed ((), consumed))
+        then
+          return
+            (`Stop_consumed
+               ( Or_error.error_string
+                   "Unexpected extra data at the end of git object file"
+               , consumed ))
         else (
-          let%map () = push_back () in
-          `Continue)))
+          match%map push_back () with
+          | `Ok -> `Continue
+          | `Reader_closed -> `Stop (Ok ()))))
   with
   | `Eof ->
-    Zlib.Inflate.finalise t.zlib_inflate;
-    Git_object_parser.finalise t.git_object_parser
+    Or_error.try_with (fun () ->
+      Zlib.Inflate.finalise t.zlib_inflate;
+      Git_object_parser.finalise t.git_object_parser)
+    |> Or_error.iter_error ~f:t.on_error
   | `Eof_with_unconsumed_data _ ->
-    t.on_error (Error.of_string "Read left unconsumed input")
-  | `Stopped () -> t.on_error (Error.of_string "Read stopped before EOF")
+    failwith "Reader left unconsumed input, should be impossible"
+  | `Stopped or_error -> Or_error.iter_error or_error ~f:t.on_error
 ;;
 
-let read_file t ~file = read_file' t ~file ~push_back:(Fn.const Deferred.unit)
+let read_file t ~file = read_file' t ~file ~push_back:(Fn.const (return `Ok))
 
 let set_on_blob t ~on_size ~on_chunk =
   Git_object_parser.set_on_blob t.git_object_parser ~on_size ~on_chunk

@@ -42,7 +42,7 @@ val read_file : t -> file:string -> unit Deferred.t
 val read_file'
   :  t
   -> file:string
-  -> push_back:(unit -> unit Deferred.t)
+  -> push_back:(unit -> [`Ok | `Reader_closed] Deferred.t)
   -> unit Deferred.t
 
 (** Change the callback that gets called while parsing [blob] objects. *)
