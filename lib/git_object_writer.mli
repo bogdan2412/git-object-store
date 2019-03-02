@@ -51,6 +51,7 @@ module For_unknown_contents_size : sig
   val pos : t -> int
   val len : t -> int
   val advance_pos : t -> by:int -> unit
+  val written_so_far : t -> int
   val finalise : t -> Sha1.Raw.t Deferred.t
   val abort : t -> unit Deferred.t
 end
@@ -97,6 +98,7 @@ module Blob : sig
     val create_uninitialised : destination_directory:string -> t
     val init_or_reset : t -> unit Deferred.t
     val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
+    val written_so_far : t -> int
     val finalise : t -> Sha1.Raw.t Deferred.t
     val abort : t -> unit Deferred.t
   end

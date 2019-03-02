@@ -135,6 +135,7 @@ module For_unknown_contents_size : sig
   val pos : t -> int
   val len : t -> int
   val advance_pos : t -> by:int -> unit
+  val written_so_far : t -> int
   val finalise : t -> Sha1.Raw.t Deferred.t
   val abort : t -> unit Deferred.t
 end = struct
@@ -181,6 +182,8 @@ end = struct
     t.start <- new_pos;
     t.pos <- new_pos
   ;;
+
+  let written_so_far t = t.pos - t.start
 
   let finalise t =
     let data_len = t.pos - t.start in
@@ -321,6 +324,7 @@ module Blob = struct
       For_unknown_contents_size.advance_pos t ~by:len
     ;;
 
+    let written_so_far t = For_unknown_contents_size.written_so_far t
     let finalise t = For_unknown_contents_size.finalise t
     let abort t = For_unknown_contents_size.abort t
   end
