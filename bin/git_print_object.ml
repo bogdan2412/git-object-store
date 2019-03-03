@@ -17,7 +17,7 @@
 
 open Core
 open Async
-open Git_object_store_lib
+open Git_object_store
 
 let read_git_object file =
   Monitor.try_with_or_error ~extract_exn:true (fun () ->

@@ -1,0 +1,18 @@
+opam-version: "2.0"
+name: "git_object_store"
+version: "0.1"
+synopsis: "Library for reading and writing git objects"
+maintainer: "Bogdan Tataroiu <b.tataroiu@gmail.com>"
+authors: [ "Bogdan Tataroiu <b.tataroiu@gmail.com>" ]
+depends: [
+  "async"
+  "core"
+  "digestif"
+  "expect_test_helpers"
+  "ppx_jane"
+  "dune"       {build}
+  "ocaml"
+]
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]

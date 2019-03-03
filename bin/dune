@@ -3,5 +3,5 @@
  (libraries
   async
   core
-  git_object_store_lib)
+  git_object_store)
  (preprocess (pps ppx_jane)))
