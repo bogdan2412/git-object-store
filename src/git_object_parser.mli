@@ -76,3 +76,32 @@ val set_on_tree_line
 
 (** Change the callback that gets called while parsing [tag] objects. *)
 val set_on_tag : t -> (Tag.t -> unit) -> unit
+
+(** Lower-level module that allows one to obtain raw payload data rather than have it be
+    parsed. *)
+module Raw : sig
+  type t
+
+  (** [create] returns a new raw parser that can be fed git object data incrementally and
+      reused to parse multiple git objects.
+
+      The return value of [on_payload_chunk] should be the number of bytes from the
+      input that have been read.  Any unconsumed data will be fed to the method on
+      the next call.
+
+      Whenever more payload data becomes available, the [on_payload_chunk] method will
+      be repeatedly called until either no data is left or until no data is consumed.
+
+      Upon [finalise] being called, the [on_payload_chunk] will be called a final time
+      with a value of [~final:true]. This final call may have a [len] of 0.
+  *)
+  val create
+    :  on_header:(Object_type.t -> size:int -> unit)
+    -> on_payload_chunk:(Bigstring.t -> pos:int -> len:int -> final:bool -> int)
+    -> on_error:(Error.t -> unit)
+    -> t
+
+  val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
+  val finalise : t -> unit
+  val reset : t -> unit
+end

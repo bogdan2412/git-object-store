@@ -17,19 +17,279 @@
 
 open Core
 
+module Raw = struct
+  module State : sig
+    module View : sig
+      type t = private
+        | Before_header
+        | Reading_payload of { mutable payload_length : int }
+        | Done
+        | Error of { mutable error : Error.t }
+      [@@deriving sexp_of]
+    end
+
+    type t [@@deriving sexp_of]
+
+    val create : unit -> t
+    val view : t -> View.t
+    val set_before_header : t -> unit
+    val set_reading_payload : t -> payload_length:int -> unit
+    val set_done : t -> unit
+    val set_error : t -> Error.t -> unit
+  end = struct
+    module View = struct
+      type t =
+        | Before_header
+        | Reading_payload of { mutable payload_length : int }
+        | Done
+        | Error of { mutable error : Error.t }
+      [@@deriving sexp_of]
+
+      let sexp_of_t = function
+        | Error { error } -> [%message "Error" ~_:(error : Error.t)]
+        | t -> sexp_of_t t
+      ;;
+    end
+
+    type t =
+      { mutable value : View.t
+      ; reading_payload : View.t
+      ; error : View.t
+      }
+
+    let sexp_of_t t = View.sexp_of_t t.value
+
+    let create () =
+      let reading_payload = View.Reading_payload { payload_length = 0 } in
+      let error = View.Error { error = Error.of_string "uninitialised" } in
+      { value = Before_header; reading_payload; error }
+    ;;
+
+    let view t = t.value
+    let set_before_header t = t.value <- Before_header
+
+    let set_reading_payload t ~payload_length =
+      (match t.reading_payload with
+       | Reading_payload record -> record.payload_length <- payload_length
+       | _ -> assert false);
+      t.value <- t.reading_payload
+    ;;
+
+    let set_done t = t.value <- Done
+
+    let set_error t error =
+      (match t.error with
+       | Error record -> record.error <- error
+       | _ -> assert false);
+      t.value <- t.error
+    ;;
+  end
+
+  type t =
+    { mutable buf : Bigstring.t
+    ; mutable pos : int
+    ; mutable len : int
+    ; mutable total_payload_read : int
+    ; state : State.t
+    ; on_header : Object_type.t -> size:int -> unit
+    ; on_payload_chunk : Bigstring.t -> pos:int -> len:int -> final:bool -> int
+    ; on_error : Error.t -> unit
+    }
+  [@@deriving fields]
+
+  let sexp_of_t
+        { buf
+        ; pos
+        ; len
+        ; total_payload_read
+        ; state
+        ; on_header = _
+        ; on_payload_chunk = _
+        ; on_error = _
+        }
+    =
+    [%sexp
+      { data = (Bigstring.to_string ~pos ~len buf : string)
+      ; total_payload_read : int
+      ; state : State.t
+      }]
+  ;;
+
+  let create' ~initial_buffer_size ~on_header ~on_payload_chunk ~on_error =
+    { buf = Bigstring.create initial_buffer_size
+    ; pos = 0
+    ; len = 0
+    ; total_payload_read = 0
+    ; state = State.create ()
+    ; on_header
+    ; on_payload_chunk
+    ; on_error
+    }
+  ;;
+
+  let create = create' ~initial_buffer_size:(1 lsl 16)
+
+  let reset t =
+    Fields.Direct.iter
+      t
+      ~buf:(fun _ _ _ -> ())
+      ~pos:(fun _ t _ -> t.pos <- 0)
+      ~len:(fun _ t _ -> t.len <- 0)
+      ~total_payload_read:(fun _ t _ -> t.total_payload_read <- 0)
+      ~state:(fun _ t _ -> State.set_before_header t.state)
+      ~on_header:(fun _ _ _ -> ())
+      ~on_payload_chunk:(fun _ _ _ -> ())
+      ~on_error:(fun _ _ _ -> ())
+  ;;
+
+  let error t error =
+    State.set_error t.state error;
+    t.on_error error
+  ;;
+
+  let set_state_reading_blob t ~payload_length =
+    State.set_reading_payload t.state ~payload_length;
+    t.on_header Blob ~size:payload_length
+  ;;
+
+  let set_state_reading_commit t ~payload_length =
+    State.set_reading_payload t.state ~payload_length;
+    t.on_header Commit ~size:payload_length
+  ;;
+
+  let set_state_reading_tree t ~payload_length =
+    State.set_reading_payload t.state ~payload_length;
+    t.on_header Tree ~size:payload_length
+  ;;
+
+  let set_state_reading_tag t ~payload_length =
+    State.set_reading_payload t.state ~payload_length;
+    t.on_header Tag ~size:payload_length
+  ;;
+
+  let read_header_payload_length t ~from_offset ~on_length_read =
+    if from_offset < t.len
+    then
+      if Bigstring.get t.buf (t.pos + from_offset) = ' '
+      then (
+        let length = ref 0 in
+        let pos = ref (t.pos + from_offset + 1) in
+        let max_pos = t.pos + t.len - 1 in
+        while
+          !pos <= max_pos
+          &&
+          let char = Bigstring.get t.buf !pos in
+          if Char.between char ~low:'0' ~high:'9'
+          then (
+            length := (!length * 10) + Char.to_int char - Char.to_int '0';
+            true)
+          else false
+        do
+          pos := !pos + 1
+        done;
+        if !pos <= max_pos
+        then
+          if Bigstring.get t.buf !pos = '\000' && !pos <> t.pos + from_offset + 1
+          then (
+            on_length_read t ~payload_length:!length;
+            pos := !pos + 1;
+            t.len <- t.len + t.pos - !pos;
+            t.total_payload_read <- t.total_payload_read + t.pos - !pos;
+            t.pos <- !pos)
+          else error t (Error.create_s [%sexp "Invalid_type"]))
+      else error t (Error.create_s [%sexp "Invalid_type"])
+  ;;
+
+  let read_header t =
+    if t.len >= 6
+    then
+      if Bigstring.get_uint32_le t.buf ~pos:t.pos = 1651469410
+      then
+        read_header_payload_length
+          t
+          ~from_offset:4
+          ~on_length_read:set_state_reading_blob
+      else if Bigstring.get_uint32_le t.buf ~pos:t.pos = 1701147252
+      then
+        read_header_payload_length
+          t
+          ~from_offset:4
+          ~on_length_read:set_state_reading_tree
+      else if Bigstring.get_uint32_le t.buf ~pos:t.pos = 1835888483
+           && Bigstring.get_uint16_le t.buf ~pos:(t.pos + 4) = 29801
+      then
+        read_header_payload_length
+          t
+          ~from_offset:6
+          ~on_length_read:set_state_reading_commit
+      else if Bigstring.get_uint32_le t.buf ~pos:t.pos = 543646068
+      then
+        read_header_payload_length t ~from_offset:3 ~on_length_read:set_state_reading_tag
+      else error t (Error.create_s [%sexp "Invalid_type"])
+  ;;
+
+  let rec read_payload t =
+    if t.len <> 0
+    then (
+      let consumed = t.on_payload_chunk t.buf ~pos:t.pos ~len:t.len ~final:false in
+      if consumed <> 0
+      then (
+        t.pos <- t.pos + consumed;
+        t.len <- t.len - consumed;
+        read_payload t))
+  ;;
+
+  let rec move_state_forward t =
+    let current_state_view = State.view t.state in
+    (match current_state_view with
+     | Before_header -> read_header t
+     | Reading_payload { payload_length = _ } -> read_payload t
+     | Done | Error _ -> ());
+    if not (phys_equal current_state_view (State.view t.state)) then move_state_forward t
+  ;;
+
+  let append_data t buf ~pos ~len =
+    if t.pos + t.len + len > Bigstring.length t.buf && t.pos <> 0
+    then (
+      Bigstring.blit ~src:t.buf ~src_pos:t.pos ~len:t.len ~dst:t.buf ~dst_pos:0;
+      t.pos <- 0);
+    while t.pos + t.len + len > Bigstring.length t.buf do
+      let new_buf = Bigstring.create (Bigstring.length t.buf * 2) in
+      assert (t.pos = 0);
+      Bigstring.blit ~src:t.buf ~src_pos:0 ~len:t.len ~dst:new_buf ~dst_pos:0;
+      t.buf <- new_buf
+    done;
+    Bigstring.blit ~src:buf ~src_pos:pos ~len ~dst:t.buf ~dst_pos:(t.pos + t.len);
+    t.len <- t.len + len;
+    t.total_payload_read <- t.total_payload_read + len;
+    move_state_forward t
+  ;;
+
+  let finalise t =
+    match State.view t.state with
+    | Before_header -> error t (Error.create_s [%sexp "Invalid_type"])
+    | Reading_payload { payload_length } ->
+      if t.total_payload_read = payload_length
+      then (
+        let consumed = t.on_payload_chunk t.buf ~pos:t.pos ~len:t.len ~final:true in
+        t.pos <- t.pos + consumed;
+        t.len <- t.len - consumed;
+        if t.len = 0
+        then State.set_done t.state
+        else error t (Error.create_s [%sexp "Unparsed_data_left"]))
+      else error t (Error.create_s [%sexp "Incorrect_length"])
+    | Done | Error _ -> ()
+  ;;
+end
+
 module State : sig
   module View : sig
     type t = private
-      | Before_type_read
-      | Reading_blob of { mutable payload_length : int }
-      | Reading_commit of { mutable payload_length : int }
-      | Reading_tree of
-          { mutable payload_length : int
-          ; parser_state : Tree.Git_object_payload_parser.State.t
-          }
-      | Reading_tag of { mutable payload_length : int }
-      | Done
-      | Error of { mutable error : Error.t }
+      | Before_header
+      | Reading_blob
+      | Reading_commit
+      | Reading_tree of { parser_state : Tree.Git_object_payload_parser.State.t }
+      | Reading_tag
     [@@deriving sexp_of]
   end
 
@@ -40,113 +300,55 @@ module State : sig
     -> t
 
   val view : t -> View.t
-  val set_before_type_read : t -> unit
-  val set_reading_blob : t -> payload_length:int -> unit
-  val set_reading_commit : t -> payload_length:int -> unit
-  val set_reading_tree : t -> payload_length:int -> unit
-  val set_reading_tag : t -> payload_length:int -> unit
-  val set_done : t -> unit
-  val set_error : t -> Error.t -> unit
+  val set_before_header : t -> unit
+  val set_reading_blob : t -> unit
+  val set_reading_commit : t -> unit
+  val set_reading_tree : t -> unit
+  val set_reading_tag : t -> unit
 end = struct
   module View = struct
     type t =
-      | Before_type_read
-      | Reading_blob of { mutable payload_length : int }
-      | Reading_commit of { mutable payload_length : int }
-      | Reading_tree of
-          { mutable payload_length : int
-          ; parser_state : Tree.Git_object_payload_parser.State.t
-          }
-      | Reading_tag of { mutable payload_length : int }
-      | Done
-      | Error of { mutable error : Error.t }
+      | Before_header
+      | Reading_blob
+      | Reading_commit
+      | Reading_tree of { parser_state : Tree.Git_object_payload_parser.State.t }
+      | Reading_tag
     [@@deriving sexp_of]
-
-    let sexp_of_t = function
-      | Error { error } -> [%message "Error" ~_:(error : Error.t)]
-      | t -> sexp_of_t t
-    ;;
   end
 
   type t =
     { mutable value : View.t
-    ; reading_blob : View.t
-    ; reading_commit : View.t
     ; reading_tree : View.t
-    ; reading_tag : View.t
-    ; error : View.t
     }
 
   let sexp_of_t t = View.sexp_of_t t.value
 
   let create ~emit_tree_line =
-    let reading_blob = View.Reading_blob { payload_length = 0 } in
-    let reading_commit = View.Reading_commit { payload_length = 0 } in
     let reading_tree =
       View.Reading_tree
-        { payload_length = 0
-        ; parser_state = Tree.Git_object_payload_parser.State.create ~emit_tree_line
-        }
+        { parser_state = Tree.Git_object_payload_parser.State.create ~emit_tree_line }
     in
-    let reading_tag = View.Reading_tag { payload_length = 0 } in
-    let error = View.Error { error = Error.of_string "uninitialised" } in
-    { value = Before_type_read
-    ; reading_blob
-    ; reading_commit
-    ; reading_tree
-    ; reading_tag
-    ; error
-    }
+    { value = Before_header; reading_tree }
   ;;
 
   let view t = t.value
-  let set_before_type_read t = t.value <- Before_type_read
+  let set_before_header t = t.value <- Before_header
+  let set_reading_blob t = t.value <- Reading_blob
+  let set_reading_commit t = t.value <- Reading_commit
 
-  let set_reading_blob t ~payload_length =
-    (match t.reading_blob with
-     | Reading_blob record -> record.payload_length <- payload_length
-     | _ -> assert false);
-    t.value <- t.reading_blob
-  ;;
-
-  let set_reading_commit t ~payload_length =
-    (match t.reading_commit with
-     | Reading_commit record -> record.payload_length <- payload_length
-     | _ -> assert false);
-    t.value <- t.reading_commit
-  ;;
-
-  let set_reading_tree t ~payload_length =
+  let set_reading_tree t =
     (match t.reading_tree with
      | Reading_tree record ->
-       record.payload_length <- payload_length;
        Tree.Git_object_payload_parser.State.reset record.parser_state
      | _ -> assert false);
     t.value <- t.reading_tree
   ;;
 
-  let set_reading_tag t ~payload_length =
-    (match t.reading_tag with
-     | Reading_tag record -> record.payload_length <- payload_length
-     | _ -> assert false);
-    t.value <- t.reading_tag
-  ;;
-
-  let set_done t = t.value <- Done
-
-  let set_error t error =
-    (match t.error with
-     | Error record -> record.error <- error
-     | _ -> assert false);
-    t.value <- t.error
-  ;;
+  let set_reading_tag t = t.value <- Reading_tag
 end
 
 type t =
-  { mutable buf : Bigstring.t
-  ; mutable pos : int
-  ; mutable len : int
-  ; mutable total_payload_read : int
+  { raw : Raw.t
   ; state : State.t
   ; mutable on_blob_size : int -> unit
   ; mutable on_blob_chunk : Bigstring.t -> pos:int -> len:int -> unit
@@ -157,11 +359,57 @@ type t =
   }
 [@@deriving fields]
 
+let on_header t object_type ~size =
+  match (object_type : Object_type.t) with
+  | Blob ->
+    State.set_reading_blob t.state;
+    t.on_blob_size size
+  | Commit -> State.set_reading_commit t.state
+  | Tree -> State.set_reading_tree t.state
+  | Tag -> State.set_reading_tag t.state
+;;
+
+let on_payload_chunk t buf ~pos ~len ~final =
+  match State.view t.state with
+  | Before_header -> failwith "[on_payload_chunk] called before [on_header]"
+  | Reading_blob ->
+    if len <> 0 then t.on_blob_chunk buf ~pos ~len;
+    len
+  | Reading_tree { parser_state } ->
+    (try
+       Tree.Git_object_payload_parser.consume_payload_exn parser_state buf ~pos ~len
+     with
+     | exn ->
+       Raw.error t.raw (Error.of_exn exn);
+       0)
+  | Reading_commit ->
+    if final
+    then (
+      (try
+         let commit =
+           Commit.parse_git_object_payload_exn (Bigstring.To_string.sub buf ~pos ~len)
+         in
+         t.on_commit commit
+       with
+       | exn -> Raw.error t.raw (Error.of_exn exn));
+      len)
+    else 0
+  | Reading_tag ->
+    if final
+    then (
+      (try
+         let tag =
+           Tag.parse_git_object_payload_exn (Bigstring.To_string.sub buf ~pos ~len)
+         in
+         t.on_tag tag
+       with
+       | exn -> Raw.error t.raw (Error.of_exn exn));
+      len)
+    else 0
+;;
+
 let sexp_of_t
-      { buf
-      ; pos
-      ; len
-      ; total_payload_read
+      { raw
       ; state
       ; on_blob_size = _
       ; on_blob_chunk = _
@@ -171,11 +419,7 @@ let sexp_of_t
       ; on_error = _
       }
   =
-  [%sexp
-    { data = (Bigstring.to_string ~pos ~len buf : string)
-    ; total_payload_read : int
-    ; state : State.t
-    }]
+  [%sexp { raw : Raw.t; state : State.t }]
 ;;
 
 let create
@@ -193,14 +437,19 @@ let create
          State.create ~emit_tree_line:(fun file_mode sha1 ~name ->
            (force t).on_tree_line file_mode sha1 ~name)
        in
-       State.set_before_type_read state;
+       State.set_before_header state;
        state)
+  and raw =
+    lazy
+      (Raw.create'
+         ~initial_buffer_size
+         ~on_header:(fun object_type ~size -> on_header (force t) object_type ~size)
+         ~on_payload_chunk:(fun buf ~pos ~len ~final ->
+           on_payload_chunk (force t) buf ~pos ~len ~final)
+         ~on_error)
   and t =
     lazy
-      { buf = Bigstring.create initial_buffer_size
-      ; pos = 0
-      ; len = 0
-      ; total_payload_read = 0
+      { raw = force raw
       ; state = force state
       ; on_blob_size
       ; on_blob_chunk
@@ -218,14 +467,14 @@ let set_on_blob t ~on_size ~on_chunk =
   t.on_blob_chunk <- on_chunk
 ;;
 
+let append_data t buf ~pos ~len = Raw.append_data t.raw buf ~pos ~len
+let finalise t = Raw.finalise t.raw
+
 let reset t =
   Fields.Direct.iter
     t
-    ~buf:(fun _ _ _ -> ())
-    ~pos:(fun _ t _ -> t.pos <- 0)
-    ~len:(fun _ t _ -> t.len <- 0)
-    ~total_payload_read:(fun _ t _ -> t.total_payload_read <- 0)
-    ~state:(fun _ t _ -> State.set_before_type_read t.state)
+    ~raw:(fun _ t _ -> Raw.reset t.raw)
+    ~state:(fun _ t _ -> State.set_before_header t.state)
     ~on_blob_size:(fun _ _ _ -> ())
     ~on_blob_chunk:(fun _ _ _ -> ())
     ~on_commit:(fun _ _ _ -> ())
@@ -234,204 +483,20 @@ let reset t =
     ~on_error:(fun _ _ _ -> ())
 ;;
 
-let error t error =
-  t.on_error error;
-  State.set_error t.state error
-;;
-
 let set_state_reading_blob t ~payload_length =
-  State.set_reading_blob t.state ~payload_length;
-  t.on_blob_size payload_length
+  Raw.set_state_reading_blob t.raw ~payload_length
 ;;
 
 let set_state_reading_tree t ~payload_length =
-  State.set_reading_tree t.state ~payload_length
+  Raw.set_state_reading_tree t.raw ~payload_length
 ;;
 
 let set_state_reading_commit t ~payload_length =
-  State.set_reading_commit t.state ~payload_length
+  Raw.set_state_reading_commit t.raw ~payload_length
 ;;
 
 let set_state_reading_tag t ~payload_length =
-  State.set_reading_tag t.state ~payload_length
-;;
-
-let read_header_payload_length t ~from_offset ~on_length_read =
-  if from_offset < t.len
-  then
-    if Bigstring.get t.buf (t.pos + from_offset) = ' '
-    then (
-      let length = ref 0 in
-      let pos = ref (t.pos + from_offset + 1) in
-      let max_pos = t.pos + t.len - 1 in
-      while
-        !pos <= max_pos
-        &&
-        let char = Bigstring.get t.buf !pos in
-        if Char.between char ~low:'0' ~high:'9'
-        then (
-          length := (!length * 10) + Char.to_int char - Char.to_int '0';
-          true)
-        else false
-      do
-        pos := !pos + 1
-      done;
-      if !pos <= max_pos
-      then
-        if Bigstring.get t.buf !pos = '\000' && !pos <> t.pos + from_offset + 1
-        then (
-          on_length_read t ~payload_length:!length;
-          pos := !pos + 1;
-          t.len <- t.len + t.pos - !pos;
-          t.total_payload_read <- t.total_payload_read + t.pos - !pos;
-          t.pos <- !pos)
-        else error t (Error.create_s [%sexp "Invalid_type"]))
-    else error t (Error.create_s [%sexp "Invalid_type"])
-;;
-
-let read_header t =
-  if t.len >= 6
-  then
-    if Bigstring.get_uint32_le t.buf ~pos:t.pos = 1651469410
-    then
-      read_header_payload_length t ~from_offset:4 ~on_length_read:set_state_reading_blob
-    else if Bigstring.get_uint32_le t.buf ~pos:t.pos = 1701147252
-    then
-      read_header_payload_length t ~from_offset:4 ~on_length_read:set_state_reading_tree
-    else if Bigstring.get_uint32_le t.buf ~pos:t.pos = 1835888483
-         && Bigstring.get_uint16_le t.buf ~pos:(t.pos + 4) = 29801
-    then
-      read_header_payload_length
-        t
-        ~from_offset:6
-        ~on_length_read:set_state_reading_commit
-    else if Bigstring.get_uint32_le t.buf ~pos:t.pos = 543646068
-    then
-      read_header_payload_length t ~from_offset:3 ~on_length_read:set_state_reading_tag
-    else error t (Error.create_s [%sexp "Invalid_type"])
-;;
-
-let read_blob_chunk t =
-  match State.view t.state with
-  | Before_type_read | Reading_commit _ | Reading_tree _ | Reading_tag _ | Done | Error _
-    -> ()
-  | Reading_blob { payload_length = _ } ->
-    if t.len <> 0
-    then (
-      t.on_blob_chunk t.buf ~pos:t.pos ~len:t.len;
-      t.pos <- 0;
-      t.len <- 0)
-;;
-
-let rec read_tree_line t =
-  match State.view t.state with
-  | Before_type_read | Reading_blob _ | Reading_commit _ | Reading_tag _ | Done | Error _
-    -> ()
-  | Reading_tree { parser_state; payload_length = _ } ->
-    (try
-       let consumed =
-         Tree.Git_object_payload_parser.consume_payload_exn
-           parser_state
-           t.buf
-           ~pos:t.pos
-           ~len:t.len
-       in
-       if consumed <> 0
-       then (
-         t.pos <- t.pos + consumed;
-         t.len <- t.len - consumed;
-         read_tree_line t)
-     with
-     | exn -> error t (Error.of_exn exn))
-;;
-
-let read_full_commit_info t =
-  match State.view t.state with
-  | Before_type_read | Reading_blob _ | Reading_tree _ | Reading_tag _ | Done | Error _
-    -> ()
-  | Reading_commit { payload_length = _ } ->
-    (try
-       let commit =
-         Commit.parse_git_object_payload_exn
-           (Bigstring.To_string.sub t.buf ~pos:t.pos ~len:t.len)
-       in
-       t.on_commit commit;
-       t.pos <- 0;
-       t.len <- 0;
-       State.set_done t.state
-     with
-     | exn -> error t (Error.of_exn exn))
-;;
-
-let read_full_tag_info t =
-  match State.view t.state with
-  | Before_type_read
-  | Reading_blob _
-  | Reading_commit _
-  | Reading_tree _
-  | Done
-  | Error _ -> ()
-  | Reading_tag { payload_length = _ } ->
-    (try
-       let tag =
-         Tag.parse_git_object_payload_exn
-           (Bigstring.To_string.sub t.buf ~pos:t.pos ~len:t.len)
-       in
-       t.on_tag tag;
-       t.pos <- 0;
-       t.len <- 0;
-       State.set_done t.state
-     with
-     | exn -> error t (Error.of_exn exn))
-;;
-
-let rec move_state_forward t =
-  let current_state_view = State.view t.state in
-  (match current_state_view with
-   | Before_type_read -> read_header t
-   | Reading_blob { payload_length = _ } -> read_blob_chunk t
-   | Reading_tree _ -> read_tree_line t
-   | Reading_tag _ | Reading_commit _ | Done | Error _ -> ());
-  if not (phys_equal current_state_view (State.view t.state)) then move_state_forward t
-;;
-
-let append_data t buf ~pos ~len =
-  if t.pos + t.len + len > Bigstring.length t.buf && t.pos <> 0
-  then (
-    Bigstring.blit ~src:t.buf ~src_pos:t.pos ~len:t.len ~dst:t.buf ~dst_pos:0;
-    t.pos <- 0);
-  while t.pos + t.len + len > Bigstring.length t.buf do
-    let new_buf = Bigstring.create (Bigstring.length t.buf * 2) in
-    assert (t.pos = 0);
-    Bigstring.blit ~src:t.buf ~src_pos:0 ~len:t.len ~dst:new_buf ~dst_pos:0;
-    t.buf <- new_buf
-  done;
-  Bigstring.blit ~src:buf ~src_pos:pos ~len ~dst:t.buf ~dst_pos:(t.pos + t.len);
-  t.len <- t.len + len;
-  t.total_payload_read <- t.total_payload_read + len;
-  move_state_forward t
-;;
-
-let finalise t =
-  match State.view t.state with
-  | Before_type_read -> error t (Error.create_s [%sexp "Invalid_type"])
-  | Done | Error _ -> ()
-  | Reading_blob { payload_length }
-  | Reading_tree { payload_length; parser_state = _ } ->
-    if t.total_payload_read = payload_length
-    then
-      if t.len = 0
-      then State.set_done t.state
-      else error t (Error.create_s [%sexp "Unparsed_data_left"])
-    else error t (Error.create_s [%sexp "Incorrect_length"])
-  | Reading_commit { payload_length } ->
-    if t.total_payload_read = payload_length
-    then read_full_commit_info t
-    else error t (Error.create_s [%sexp "Incorrect_length"])
-  | Reading_tag { payload_length } ->
-    if t.total_payload_read = payload_length
-    then read_full_tag_info t
-    else error t (Error.create_s [%sexp "Incorrect_length"])
+  Raw.set_state_reading_tag t.raw ~payload_length
 ;;
 
 let%expect_test "reading header" =
@@ -450,67 +515,131 @@ let%expect_test "reading header" =
     printf !"%{sexp: t}\n" t
   in
   test "com";
-  [%expect {| ((data com) (total_payload_read 3) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data com) (total_payload_read 3) (state Before_header)))
+     (state Before_header)) |}];
   test "comm";
-  [%expect {| ((data comm) (total_payload_read 4) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data comm) (total_payload_read 4) (state Before_header)))
+     (state Before_header)) |}];
   test "commit";
-  [%expect {| ((data commit) (total_payload_read 6) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data commit) (total_payload_read 6) (state Before_header)))
+     (state Before_header)) |}];
   test "commit ";
-  [%expect {| ((data "commit ") (total_payload_read 7) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data "commit ") (total_payload_read 7) (state Before_header)))
+     (state Before_header)) |}];
   test "commit 123";
-  [%expect {| ((data "commit 123") (total_payload_read 10) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data "commit 123") (total_payload_read 10) (state Before_header)))
+     (state Before_header)) |}];
   test "commit 123\000";
   [%expect
     {|
-        ((data "") (total_payload_read 0)
-         (state (Reading_commit (payload_length 123)))) |}];
+        ((raw
+          ((data "") (total_payload_read 0)
+           (state (Reading_payload (payload_length 123)))))
+         (state Reading_commit)) |}];
   test "tre";
-  [%expect {| ((data tre) (total_payload_read 3) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data tre) (total_payload_read 3) (state Before_header)))
+     (state Before_header)) |}];
   test "tree";
-  [%expect {| ((data tree) (total_payload_read 4) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data tree) (total_payload_read 4) (state Before_header)))
+     (state Before_header)) |}];
   test "tree ";
-  [%expect {| ((data "tree ") (total_payload_read 5) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data "tree ") (total_payload_read 5) (state Before_header)))
+     (state Before_header)) |}];
   test "tree 38";
-  [%expect {| ((data "tree 38") (total_payload_read 7) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data "tree 38") (total_payload_read 7) (state Before_header)))
+     (state Before_header)) |}];
   test "tree 38\000";
   [%expect
     {|
-        ((data "") (total_payload_read 0)
-         (state
-          (Reading_tree (payload_length 38)
-           (parser_state ((walked_without_finding_null 0)))))) |}];
+        ((raw
+          ((data "") (total_payload_read 0)
+           (state (Reading_payload (payload_length 38)))))
+         (state (Reading_tree (parser_state ((walked_without_finding_null 0)))))) |}];
   test "blo";
-  [%expect {| ((data blo) (total_payload_read 3) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data blo) (total_payload_read 3) (state Before_header)))
+     (state Before_header)) |}];
   test "blob";
-  [%expect {| ((data blob) (total_payload_read 4) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data blob) (total_payload_read 4) (state Before_header)))
+     (state Before_header)) |}];
   test "blob ";
-  [%expect {| ((data "blob ") (total_payload_read 5) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data "blob ") (total_payload_read 5) (state Before_header)))
+     (state Before_header)) |}];
   test "blob 1234";
-  [%expect {| ((data "blob 1234") (total_payload_read 9) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data "blob 1234") (total_payload_read 9) (state Before_header)))
+     (state Before_header)) |}];
   test "blob 1234\000";
   [%expect
     {|
-        ((data "") (total_payload_read 0)
-         (state (Reading_blob (payload_length 1234)))) |}];
+        ((raw
+          ((data "") (total_payload_read 0)
+           (state (Reading_payload (payload_length 1234)))))
+         (state Reading_blob)) |}];
   test "blob \000";
   [%expect
-    {| ((data "blob \000") (total_payload_read 6) (state (Error Invalid_type))) |}];
+    {|
+      ((raw
+        ((data "blob \000") (total_payload_read 6) (state (Error Invalid_type))))
+       (state Before_header)) |}];
   test "blob 1234a\000";
   [%expect
     {|
-        ((data "blob 1234a\000") (total_payload_read 11)
-         (state (Error Invalid_type))) |}];
+        ((raw
+          ((data "blob 1234a\000") (total_payload_read 11)
+           (state (Error Invalid_type))))
+         (state Before_header)) |}];
   test "ta";
-  [%expect {| ((data ta) (total_payload_read 2) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data ta) (total_payload_read 2) (state Before_header)))
+     (state Before_header)) |}];
   test "tag";
-  [%expect {| ((data tag) (total_payload_read 3) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data tag) (total_payload_read 3) (state Before_header)))
+     (state Before_header)) |}];
   test "tag ";
-  [%expect {| ((data "tag ") (total_payload_read 4) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data "tag ") (total_payload_read 4) (state Before_header)))
+     (state Before_header)) |}];
   test "tag 123";
-  [%expect {| ((data "tag 123") (total_payload_read 7) (state Before_type_read)) |}];
+  [%expect
+    {|
+    ((raw ((data "tag 123") (total_payload_read 7) (state Before_header)))
+     (state Before_header)) |}];
   test "tag 123\000";
   [%expect
-    {| ((data "") (total_payload_read 0) (state (Reading_tag (payload_length 123)))) |}]
+    {|
+      ((raw
+        ((data "") (total_payload_read 0)
+         (state (Reading_payload (payload_length 123)))))
+       (state Reading_tag)) |}]
 ;;
 
 let%expect_test "read blob" =
@@ -534,7 +663,7 @@ let%expect_test "read blob" =
     {|
         Blob size: 16
         Blob chunk: 1a2a3a4a5a6a7a8a
-        ((data "") (total_payload_read 16) (state Done)) |}];
+        ((raw ((data "") (total_payload_read 16) (state Done))) (state Reading_blob)) |}];
   let t = new_t () in
   for i = 0 to Bigstring.length blob_text - 1 do
     append_data t blob_text ~pos:i ~len:1
@@ -560,7 +689,7 @@ let%expect_test "read blob" =
         Blob chunk: a
         Blob chunk: 8
         Blob chunk: a
-        ((data "") (total_payload_read 16) (state Done)) |}]
+        ((raw ((data "") (total_payload_read 16) (state Done))) (state Reading_blob)) |}]
 ;;
 
 let%expect_test "read commit" =
@@ -616,7 +745,8 @@ let%expect_test "read commit" =
            \nXXXXXXXX\
            \n-----END PGP SIGNATURE-----"))
          (description "Merge branch 'branch'\n"))
-        ((data "") (total_payload_read 830) (state Done)) |}];
+        ((raw ((data "") (total_payload_read 830) (state Done)))
+         (state Reading_commit)) |}];
   let t = new_t () in
   for i = 0 to Bigstring.length commit_text - 1 do
     append_data t commit_text ~pos:i ~len:1
@@ -655,7 +785,8 @@ let%expect_test "read commit" =
            \nXXXXXXXX\
            \n-----END PGP SIGNATURE-----"))
          (description "Merge branch 'branch'\n"))
-        ((data "") (total_payload_read 830) (state Done)) |}]
+        ((raw ((data "") (total_payload_read 830) (state Done)))
+         (state Reading_commit)) |}]
 ;;
 
 let%expect_test "read tree" =
@@ -691,7 +822,8 @@ let%expect_test "read tree" =
         Received tree line: Non_executable_file e2129701f1a4d54dc44f03c93bca0a2aec7c5449 file1
         Received tree line: Non_executable_file 6c493ff740f9380390d5c9ddef4af18697ac9375 file2
         Received tree line: Link dea97c3520a755e4db5694d743aa8599511bbe9c link
-        ((data "") (total_payload_read 128) (state Done)) |}];
+        ((raw ((data "") (total_payload_read 128) (state Done)))
+         (state (Reading_tree (parser_state ((walked_without_finding_null 0)))))) |}];
   let t = new_t () in
   for i = 0 to Bigstring.length tree_text - 1 do
     append_data t tree_text ~pos:i ~len:1
@@ -704,7 +836,8 @@ let%expect_test "read tree" =
         Received tree line: Non_executable_file e2129701f1a4d54dc44f03c93bca0a2aec7c5449 file1
         Received tree line: Non_executable_file 6c493ff740f9380390d5c9ddef4af18697ac9375 file2
         Received tree line: Link dea97c3520a755e4db5694d743aa8599511bbe9c link
-        ((data "") (total_payload_read 128) (state Done)) |}]
+        ((raw ((data "") (total_payload_read 128) (state Done)))
+         (state (Reading_tree (parser_state ((walked_without_finding_null 0)))))) |}]
 ;;
 
 let%expect_test "read tag" =
@@ -737,7 +870,7 @@ let%expect_test "read tag" =
           (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
             (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
          (description "test tag\n"))
-        ((data "") (total_payload_read 150) (state Done)) |}];
+        ((raw ((data "") (total_payload_read 150) (state Done))) (state Reading_tag)) |}];
   let t = new_t () in
   for i = 0 to Bigstring.length tag_text - 1 do
     append_data t tag_text ~pos:i ~len:1
@@ -753,7 +886,7 @@ let%expect_test "read tag" =
           (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
             (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
          (description "test tag\n"))
-        ((data "") (total_payload_read 150) (state Done)) |}]
+        ((raw ((data "") (total_payload_read 150) (state Done))) (state Reading_tag)) |}]
 ;;
 
 let create = create ~initial_buffer_size:(1 lsl 16)
