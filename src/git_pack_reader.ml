@@ -1000,6 +1000,11 @@ let index_pack ~pack_file =
 let sha1 =
   let result = Sha1.Raw.Volatile.create () in
   fun t ~index ->
+    if index < 0 || index >= t.items_in_pack
+    then
+      raise_s
+        [%message
+          "Invalid value for index" (index : int) ~items_in_pack:(t.items_in_pack : int)];
     Bigstring.To_bytes.blit
       ~src:t.index.file_mmap
       ~src_pos:(Index.Section_pos.sha1 t.index.section_pos index)
@@ -1036,6 +1041,46 @@ let object_length t ~index =
   let pos = pack_file_object_offset t ~index in
   object_length' t.pack_file_mmap ~pos
 ;;
+
+module Find_result : sig
+  module Volatile : sig
+    type t = private
+      | None
+      | Some of { mutable index : int }
+    [@@deriving sexp_of]
+
+    val none : t
+    val some : int -> t
+    val index_exn : t -> int
+  end
+end = struct
+  module Volatile = struct
+    type t =
+      | None
+      | Some of { mutable index : int }
+
+    let sexp_of_t = function
+      | None -> Sexp.List []
+      | Some { index } -> Sexp.List [ Sexp.Atom (Int.to_string index) ]
+    ;;
+
+    let none = None
+
+    let some =
+      let value = Some { index = -1 } in
+      fun index ->
+        (match value with
+         | Some record -> record.index <- index
+         | None -> assert false);
+        value
+    ;;
+
+    let index_exn = function
+      | None -> failwith "SHA1 not present in pack file"
+      | Some { index } -> index
+    ;;
+  end
+end
 
 let find_sha1_index_gen =
   let rec sha1_greater_than_or_equal t sha1_get_char sha1 ~index_pos ~pos =
@@ -1101,8 +1146,10 @@ let find_sha1_index_gen =
       step := !step lsr 1
     done;
     if sha1_equal t sha1_get_char sha1 ~index_pos:!pos ~pos:0
-    then (!pos - Index.Section_pos.sha1 t.index.section_pos 0) / Sha1.Raw.length
-    else failwith "SHA1 not in pack"
+    then
+      Find_result.Volatile.some
+        ((!pos - Index.Section_pos.sha1 t.index.section_pos 0) / Sha1.Raw.length)
+    else Find_result.Volatile.none
 ;;
 
 let find_sha1_index t sha1 = find_sha1_index_gen t String.get (Sha1.Raw.to_string sha1)
@@ -1162,7 +1209,7 @@ let rec read_raw_delta_object =
             ~dst:(Sha1.Raw.Volatile.bytes sha1)
             ~dst_pos:0
             ~len:Sha1.Raw.length;
-          let index = find_sha1_index' t sha1 in
+          let index = Find_result.Volatile.index_exn (find_sha1_index' t sha1) in
           pack_file_object_offset t ~index, data_start_pos + Sha1.Raw.length
       in
       let object_type = read_raw_delta_object t ~pos:base_pos in
@@ -1244,7 +1291,7 @@ let%expect_test "read pack" =
     for index = 0 to t.items_in_pack - 1 do
       printf
         !"%3d | %{Sha1.Hex} | %16d | %13d | %{sexp: Pack_object_type.t}\n"
-        (find_sha1_index' t (sha1 t ~index))
+        (Find_result.Volatile.index_exn (find_sha1_index' t (sha1 t ~index)))
         (Sha1.Raw.Volatile.to_hex (sha1 t ~index))
         (pack_file_object_offset t ~index)
         (object_length t ~index)
