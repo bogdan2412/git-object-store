@@ -53,3 +53,7 @@ end
 
 val find_sha1_index : t -> Sha1.Raw.t -> Find_result.Volatile.t
 val find_sha1_index' : t -> Sha1.Raw.Volatile.t -> Find_result.Volatile.t
+
+module For_testing : sig
+  val print_out_pack_file : string -> unit Deferred.t
+end
