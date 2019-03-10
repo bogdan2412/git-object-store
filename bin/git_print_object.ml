@@ -59,6 +59,7 @@ let read_git_pack_file pack_file =
       Git_pack_reader.read_object
         t
         ~index
+        ~on_blob_size:(fun (_ : int) -> ())
         ~on_blob_chunk:(fun buf ~pos ~len ->
           Core.printf "Blob chunk:\n%s\n" (Bigstring.To_string.sub buf ~pos ~len))
         ~on_commit:(Core.printf !"%{sexp: Commit.t}\n")

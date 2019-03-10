@@ -75,7 +75,8 @@ module Base_object_parser : sig
   val reset_for_blob
     :  t
     -> payload_length:int
-    -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
+    -> on_size:(int -> unit)
+    -> on_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
     -> unit
 
   val reset_for_commit : t -> payload_length:int -> on_commit:(Commit.t -> unit) -> unit
@@ -117,13 +118,10 @@ end = struct
     { git_object_parser; zlib_inflate }
   ;;
 
-  let reset_for_blob t ~payload_length ~on_blob_chunk =
+  let reset_for_blob t ~payload_length ~on_size ~on_chunk =
     Zlib.Inflate.init_or_reset t.zlib_inflate;
     Git_object_parser.reset t.git_object_parser;
-    Git_object_parser.set_on_blob
-      t.git_object_parser
-      ~on_size:ignore
-      ~on_chunk:on_blob_chunk;
+    Git_object_parser.set_on_blob t.git_object_parser ~on_size ~on_chunk;
     Git_object_parser.set_state_reading_blob t.git_object_parser ~payload_length
   ;;
 
@@ -200,6 +198,7 @@ module Delta_object_parser : sig
   val parse_result
     :  t
     -> Object_type.t
+    -> on_blob_size:(int -> unit)
     -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
     -> on_commit:(Commit.t -> unit)
     -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
@@ -386,7 +385,15 @@ end = struct
             (expected_result_length : int)]
   ;;
 
-  let parse_result t object_type ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag =
+  let parse_result
+        t
+        object_type
+        ~on_blob_size
+        ~on_blob_chunk
+        ~on_commit
+        ~on_tree_line
+        ~on_tag
+    =
     Git_object_parser.reset t.git_object_parser;
     (match (object_type : Object_type.t) with
      | Commit ->
@@ -402,7 +409,7 @@ end = struct
      | Blob ->
        Git_object_parser.set_on_blob
          t.git_object_parser
-         ~on_size:ignore
+         ~on_size:on_blob_size
          ~on_chunk:on_blob_chunk;
        Git_object_parser.set_state_reading_blob
          t.git_object_parser
@@ -1236,7 +1243,7 @@ let read_object =
     in
     ()
   in
-  fun t ~index ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag ->
+  fun t ~index ~on_blob_size ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag ->
     let pos = pack_file_object_offset t ~index in
     let payload_length = object_length' t.pack_file_mmap ~pos in
     let data_start_pos = skip_variable_length_integer t.pack_file_mmap ~pos in
@@ -1254,7 +1261,8 @@ let read_object =
       Base_object_parser.reset_for_blob
         t.base_object_parser
         ~payload_length
-        ~on_blob_chunk;
+        ~on_size:on_blob_size
+        ~on_chunk:on_blob_chunk;
       feed_parser_data t data_start_pos
     | Tag ->
       Base_object_parser.reset_for_tag t.base_object_parser ~payload_length ~on_tag;
@@ -1264,6 +1272,7 @@ let read_object =
       Delta_object_parser.parse_result
         t.delta_object_parser
         object_type
+        ~on_blob_size
         ~on_blob_chunk
         ~on_commit
         ~on_tree_line
@@ -1289,6 +1298,7 @@ module For_testing = struct
       read_object
         t
         ~index
+        ~on_blob_size:(fun size -> printf "Blob size: %d\n" size)
         ~on_blob_chunk:(fun buf ~pos ~len ->
           printf "Blob chunk: %S\n" (Bigstring.To_string.sub buf ~pos ~len))
         ~on_commit:(printf !"%{sexp: Commit.t}\n")
@@ -1330,9 +1340,11 @@ let%expect_test "read pack" =
            4 | d2ef8c710416f38bdf6e8487630486830edc6c7f |              150 |           202 | Commit
 
          1c59427adc4b205a270d8f810310394962e79a8b
+         Blob size: 12
          Blob chunk: "second file\n"
 
          303ff981c488b812b6215f7db7920dedb3b59d9a
+         Blob size: 11
          Blob chunk: "first file\n"
 
          ac5f368017e73cac599c7dfd77bd36da2b816eaf

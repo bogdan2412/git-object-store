@@ -237,9 +237,11 @@ let%expect_test "write simple pack" =
         4 | d2ef8c710416f38bdf6e8487630486830edc6c7f |              150 |           202 | Commit
 
       1c59427adc4b205a270d8f810310394962e79a8b
+      Blob size: 12
       Blob chunk: "second file\n"
 
       303ff981c488b812b6215f7db7920dedb3b59d9a
+      Blob size: 11
       Blob chunk: "first file\n"
 
       ac5f368017e73cac599c7dfd77bd36da2b816eaf
