@@ -37,6 +37,13 @@ val read_object
   -> on_tag:(Tag.t -> unit)
   -> unit
 
+val read_raw_object
+  :  t
+  -> index:int
+  -> on_header:(Object_type.t -> size:int -> unit)
+  -> on_payload:(Bigstring.t -> pos:int -> len:int -> unit)
+  -> unit
+
 module Find_result : sig
   module Volatile : sig
     (** Do not keep references to instances of this type as they will be mutated

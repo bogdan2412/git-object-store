@@ -1231,6 +1231,14 @@ let rec read_raw_delta_object =
       object_type
 ;;
 
+let read_raw_object t ~index ~on_header ~on_payload =
+  let pos = pack_file_object_offset t ~index in
+  let object_type = read_raw_delta_object t ~pos in
+  let len = Delta_object_parser.result_len t.delta_object_parser in
+  on_header object_type ~size:len;
+  on_payload (Delta_object_parser.result_buf t.delta_object_parser) ~pos:0 ~len
+;;
+
 let read_object =
   let feed_parser_data t pos =
     let (_ : int) =
