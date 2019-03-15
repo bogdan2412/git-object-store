@@ -124,212 +124,106 @@ let rec write_int_as_string buf ~pos ~value =
     write_int_as_string buf ~pos:(pos - 1) ~value:(value / 10))
 ;;
 
-module For_unknown_contents_size : sig
-  type t
-
-  val create_uninitialised : destination_directory:string -> t
-  val init_or_reset : t -> prefix:string -> unit Deferred.t
-  val double_buffer_space : t -> unit
-  val make_room : t -> for_bytes:int -> unit
-  val buf : t -> Bigstring.t
-  val pos : t -> int
-  val len : t -> int
-  val advance_pos : t -> by:int -> unit
-  val written_so_far : t -> int
-  val finalise : t -> Sha1.Raw.t Deferred.t
-  val abort : t -> unit Deferred.t
-end = struct
-  type t =
-    { raw : Raw.t
-    ; mutable prefix : string
-    ; mutable buf : Bigstring.t
-    ; mutable start : int
-    ; mutable pos : int
-    }
-
-  let create_uninitialised ~destination_directory =
-    { raw = Raw.create_uninitialised ~destination_directory
-    ; prefix = ""
-    ; buf = Bigstring.create (if Core.am_running_inline_test then 1 else 1 lsl 15)
-    ; start = 0
-    ; pos = 0
-    }
+module With_header = struct
+  let object_type_string object_type =
+    match (object_type : Object_type.t) with
+    | Commit -> "commit "
+    | Tree -> "tree "
+    | Blob -> "blob "
+    | Tag -> "tag "
   ;;
 
-  let double_buffer_space t =
-    let new_buf = Bigstring.create (Bigstring.length t.buf * 2) in
-    Bigstring.blit ~src:t.buf ~src_pos:0 ~dst:new_buf ~dst_pos:0 ~len:t.pos;
-    t.buf <- new_buf
-  ;;
+  module Unknown_size : sig
+    type t
 
-  let make_room_for_pos t ~pos =
-    while pos >= Bigstring.length t.buf do
-      double_buffer_space t
-    done
-  ;;
-
-  let make_room t ~for_bytes = make_room_for_pos t ~pos:(t.pos + for_bytes - 1)
-  let buf t = t.buf
-  let pos t = t.pos
-  let len t = Bigstring.length t.buf - t.pos
-  let advance_pos t ~by = t.pos <- t.pos + by
-
-  let init_or_reset t ~prefix =
-    let%map () = Raw.init_or_reset t.raw in
-    let new_pos = String.length prefix + 32 in
-    make_room_for_pos t ~pos:new_pos;
-    t.prefix <- prefix;
-    t.start <- new_pos;
-    t.pos <- new_pos
-  ;;
-
-  let written_so_far t = t.pos - t.start
-
-  let finalise t =
-    let data_len = t.pos - t.start in
-    assert (data_len >= 0);
-    let len_str_len = int_as_string_length ~acc:0 data_len in
-    let prefix_len = String.length t.prefix in
-    Bigstring.set t.buf (t.start - 1) '\000';
-    write_int_as_string t.buf ~pos:(t.start - 2) ~value:data_len;
-    let len = prefix_len + len_str_len + 1 + data_len in
-    let pos = t.pos - len in
-    Bigstring.From_string.blit
-      ~src:t.prefix
-      ~src_pos:0
-      ~len:prefix_len
-      ~dst:t.buf
-      ~dst_pos:pos;
-    Raw.append_data t.raw t.buf ~pos ~len;
-    Raw.finalise t.raw
-  ;;
-
-  let abort t = Raw.abort t.raw
-end
-
-module Commit_ = Commit
-
-module Commit = struct
-  type t = For_unknown_contents_size.t
-
-  let create ~destination_directory =
-    For_unknown_contents_size.create_uninitialised ~destination_directory
-  ;;
-
-  let write t commit =
-    let%bind () = For_unknown_contents_size.init_or_reset t ~prefix:"commit " in
-    let commit_str = Commit.format_as_git_object_payload commit in
-    let commit_len = String.length commit_str in
-    For_unknown_contents_size.make_room t ~for_bytes:commit_len;
-    Bigstring.From_string.blit
-      ~src:commit_str
-      ~src_pos:0
-      ~dst:(For_unknown_contents_size.buf t)
-      ~dst_pos:(For_unknown_contents_size.pos t)
-      ~len:commit_len;
-    For_unknown_contents_size.advance_pos t ~by:commit_len;
-    For_unknown_contents_size.finalise t
-  ;;
-
-  let write' ~destination_directory commit =
-    let t = create ~destination_directory in
-    write t commit
-  ;;
-end
-
-module Tag_ = Tag
-
-module Tag = struct
-  type t = For_unknown_contents_size.t
-
-  let create ~destination_directory =
-    For_unknown_contents_size.create_uninitialised ~destination_directory
-  ;;
-
-  let write t tag =
-    let%bind () = For_unknown_contents_size.init_or_reset t ~prefix:"tag " in
-    let tag_str = Tag.format_as_git_object_payload tag in
-    let tag_len = String.length tag_str in
-    For_unknown_contents_size.make_room t ~for_bytes:tag_len;
-    Bigstring.From_string.blit
-      ~src:tag_str
-      ~src_pos:0
-      ~dst:(For_unknown_contents_size.buf t)
-      ~dst_pos:(For_unknown_contents_size.pos t)
-      ~len:tag_len;
-    For_unknown_contents_size.advance_pos t ~by:tag_len;
-    For_unknown_contents_size.finalise t
-  ;;
-
-  let write' ~destination_directory tag =
-    let t = create ~destination_directory in
-    write t tag
-  ;;
-end
-
-module Tree = struct
-  type t = For_unknown_contents_size.t
-
-  let create_uninitialised ~destination_directory =
-    For_unknown_contents_size.create_uninitialised ~destination_directory
-  ;;
-
-  let init_or_reset t = For_unknown_contents_size.init_or_reset t ~prefix:"tree "
-
-  let write_tree_line_gen write_tree_line t mode sha1 ~name =
-    match
-      ( write_tree_line
-          mode
-          sha1
-          ~name
-          (For_unknown_contents_size.buf t)
-          ~pos:(For_unknown_contents_size.pos t)
-          ~len:(For_unknown_contents_size.len t)
-        : Tree.Git_object_payload_formatter.Write_result.t )
-    with
-    | Wrote { bytes } -> For_unknown_contents_size.advance_pos t ~by:bytes
-    | Need_more_space -> For_unknown_contents_size.double_buffer_space t
-  ;;
-
-  let write_tree_line =
-    write_tree_line_gen Tree.Git_object_payload_formatter.write_tree_line
-  ;;
-
-  let write_tree_line' =
-    write_tree_line_gen Tree.Git_object_payload_formatter.write_tree_line'
-  ;;
-
-  let finalise t = For_unknown_contents_size.finalise t
-  let abort t = For_unknown_contents_size.abort t
-end
-
-module Blob = struct
-  module Unknown_size = struct
-    type t = For_unknown_contents_size.t
+    val create_uninitialised : destination_directory:string -> t
+    val init_or_reset : t -> Object_type.t -> unit Deferred.t
+    val double_buffer_space : t -> unit
+    val make_room : t -> for_bytes:int -> unit
+    val buf : t -> Bigstring.t
+    val pos : t -> int
+    val len : t -> int
+    val advance_pos : t -> by:int -> unit
+    val written_so_far : t -> int
+    val finalise : t -> Sha1.Raw.t Deferred.t
+    val abort : t -> unit Deferred.t
+  end = struct
+    type t =
+      { raw : Raw.t
+      ; mutable object_type : string
+      ; mutable buf : Bigstring.t
+      ; mutable start : int
+      ; mutable pos : int
+      }
 
     let create_uninitialised ~destination_directory =
-      For_unknown_contents_size.create_uninitialised ~destination_directory
+      { raw = Raw.create_uninitialised ~destination_directory
+      ; object_type = ""
+      ; buf = Bigstring.create (if Core.am_running_inline_test then 1 else 1 lsl 15)
+      ; start = 0
+      ; pos = 0
+      }
     ;;
 
-    let init_or_reset t = For_unknown_contents_size.init_or_reset t ~prefix:"blob "
-
-    let append_data t buf ~pos ~len =
-      For_unknown_contents_size.make_room t ~for_bytes:len;
-      Bigstring.blit
-        ~src:buf
-        ~src_pos:pos
-        ~dst:(For_unknown_contents_size.buf t)
-        ~dst_pos:(For_unknown_contents_size.pos t)
-        ~len;
-      For_unknown_contents_size.advance_pos t ~by:len
+    let double_buffer_space t =
+      let new_buf = Bigstring.create (Bigstring.length t.buf * 2) in
+      Bigstring.blit ~src:t.buf ~src_pos:0 ~dst:new_buf ~dst_pos:0 ~len:t.pos;
+      t.buf <- new_buf
     ;;
 
-    let written_so_far t = For_unknown_contents_size.written_so_far t
-    let finalise t = For_unknown_contents_size.finalise t
-    let abort t = For_unknown_contents_size.abort t
+    let make_room_for_pos t ~pos =
+      while pos >= Bigstring.length t.buf do
+        double_buffer_space t
+      done
+    ;;
+
+    let make_room t ~for_bytes = make_room_for_pos t ~pos:(t.pos + for_bytes - 1)
+    let buf t = t.buf
+    let pos t = t.pos
+    let len t = Bigstring.length t.buf - t.pos
+    let advance_pos t ~by = t.pos <- t.pos + by
+
+    let init_or_reset t object_type =
+      let%map () = Raw.init_or_reset t.raw in
+      make_room_for_pos t ~pos:32;
+      t.object_type <- object_type_string object_type;
+      t.start <- 32;
+      t.pos <- 32
+    ;;
+
+    let written_so_far t = t.pos - t.start
+
+    let finalise t =
+      let data_len = t.pos - t.start in
+      assert (data_len >= 0);
+      let len_str_len = int_as_string_length ~acc:0 data_len in
+      let object_type_len = String.length t.object_type in
+      Bigstring.set t.buf (t.start - 1) '\000';
+      write_int_as_string t.buf ~pos:(t.start - 2) ~value:data_len;
+      let len = object_type_len + len_str_len + 1 + data_len in
+      let pos = t.pos - len in
+      Bigstring.From_string.blit
+        ~src:t.object_type
+        ~src_pos:0
+        ~len:object_type_len
+        ~dst:t.buf
+        ~dst_pos:pos;
+      Raw.append_data t.raw t.buf ~pos ~len;
+      Raw.finalise t.raw
+    ;;
+
+    let abort t = Raw.abort t.raw
   end
 
-  module Known_size = struct
+  module Known_size : sig
+    type t
+
+    val create_uninitialised : destination_directory:string -> t
+    val init_or_reset : t -> Object_type.t -> length:int -> unit Deferred.t
+    val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
+    val finalise : t -> Sha1.Raw.t Deferred.t
+    val abort : t -> unit Deferred.t
+  end = struct
     type t =
       { raw : Raw.t
       ; buf : Bigstring.t
@@ -338,25 +232,29 @@ module Blob = struct
       }
 
     let create_uninitialised ~destination_directory =
-      let t =
-        { raw = Raw.create_uninitialised ~destination_directory
-        ; buf = Bigstring.create 32
-        ; expected = 0
-        ; written = 0
-        }
-      in
-      Bigstring.From_string.blit ~src:"blob " ~src_pos:0 ~dst:t.buf ~dst_pos:0 ~len:5;
-      t
+      { raw = Raw.create_uninitialised ~destination_directory
+      ; buf = Bigstring.create 32
+      ; expected = 0
+      ; written = 0
+      }
     ;;
 
-    let init_or_reset t ~length =
+    let init_or_reset t object_type ~length =
+      let object_type_str = object_type_string object_type in
+      let object_type_len = String.length object_type_str in
+      Bigstring.From_string.blit
+        ~src:object_type_str
+        ~src_pos:0
+        ~dst:t.buf
+        ~dst_pos:0
+        ~len:object_type_len;
       let len_str_len = int_as_string_length ~acc:0 length in
-      write_int_as_string t.buf ~pos:(5 + len_str_len - 1) ~value:length;
-      Bigstring.set t.buf (5 + len_str_len) '\000';
+      write_int_as_string t.buf ~pos:(object_type_len + len_str_len - 1) ~value:length;
+      Bigstring.set t.buf (object_type_len + len_str_len) '\000';
       t.expected <- length;
       t.written <- 0;
       let%map () = Raw.init_or_reset t.raw in
-      Raw.append_data t.raw t.buf ~pos:0 ~len:(5 + len_str_len + 1)
+      Raw.append_data t.raw t.buf ~pos:0 ~len:(object_type_len + len_str_len + 1)
     ;;
 
     let append_data t buf ~pos ~len =
@@ -369,13 +267,149 @@ module Blob = struct
       then
         raise_s
           [%message
-            "Blob.Known_size was not fed the expected amount of data"
+            "With_header.Known_size was not fed the expected amount of data"
               ~expected:(t.expected : int)
               ~written:(t.written : int)];
       Raw.finalise t.raw
     ;;
 
     let abort t = Raw.abort t.raw
+  end
+end
+
+module Commit_ = Commit
+
+module Commit = struct
+  type t = With_header.Unknown_size.t
+
+  let create ~destination_directory =
+    With_header.Unknown_size.create_uninitialised ~destination_directory
+  ;;
+
+  let write t commit =
+    let%bind () = With_header.Unknown_size.init_or_reset t Commit in
+    let commit_str = Commit.format_as_git_object_payload commit in
+    let commit_len = String.length commit_str in
+    With_header.Unknown_size.make_room t ~for_bytes:commit_len;
+    Bigstring.From_string.blit
+      ~src:commit_str
+      ~src_pos:0
+      ~dst:(With_header.Unknown_size.buf t)
+      ~dst_pos:(With_header.Unknown_size.pos t)
+      ~len:commit_len;
+    With_header.Unknown_size.advance_pos t ~by:commit_len;
+    With_header.Unknown_size.finalise t
+  ;;
+
+  let write' ~destination_directory commit =
+    let t = create ~destination_directory in
+    write t commit
+  ;;
+end
+
+module Tag_ = Tag
+
+module Tag = struct
+  type t = With_header.Unknown_size.t
+
+  let create ~destination_directory =
+    With_header.Unknown_size.create_uninitialised ~destination_directory
+  ;;
+
+  let write t tag =
+    let%bind () = With_header.Unknown_size.init_or_reset t Tag in
+    let tag_str = Tag.format_as_git_object_payload tag in
+    let tag_len = String.length tag_str in
+    With_header.Unknown_size.make_room t ~for_bytes:tag_len;
+    Bigstring.From_string.blit
+      ~src:tag_str
+      ~src_pos:0
+      ~dst:(With_header.Unknown_size.buf t)
+      ~dst_pos:(With_header.Unknown_size.pos t)
+      ~len:tag_len;
+    With_header.Unknown_size.advance_pos t ~by:tag_len;
+    With_header.Unknown_size.finalise t
+  ;;
+
+  let write' ~destination_directory tag =
+    let t = create ~destination_directory in
+    write t tag
+  ;;
+end
+
+module Tree = struct
+  type t = With_header.Unknown_size.t
+
+  let create_uninitialised ~destination_directory =
+    With_header.Unknown_size.create_uninitialised ~destination_directory
+  ;;
+
+  let init_or_reset t = With_header.Unknown_size.init_or_reset t Tree
+
+  let write_tree_line_gen write_tree_line t mode sha1 ~name =
+    match
+      ( write_tree_line
+          mode
+          sha1
+          ~name
+          (With_header.Unknown_size.buf t)
+          ~pos:(With_header.Unknown_size.pos t)
+          ~len:(With_header.Unknown_size.len t)
+        : Tree.Git_object_payload_formatter.Write_result.t )
+    with
+    | Wrote { bytes } -> With_header.Unknown_size.advance_pos t ~by:bytes
+    | Need_more_space -> With_header.Unknown_size.double_buffer_space t
+  ;;
+
+  let write_tree_line =
+    write_tree_line_gen Tree.Git_object_payload_formatter.write_tree_line
+  ;;
+
+  let write_tree_line' =
+    write_tree_line_gen Tree.Git_object_payload_formatter.write_tree_line'
+  ;;
+
+  let finalise t = With_header.Unknown_size.finalise t
+  let abort t = With_header.Unknown_size.abort t
+end
+
+module Blob = struct
+  module Unknown_size = struct
+    type t = With_header.Unknown_size.t
+
+    let create_uninitialised ~destination_directory =
+      With_header.Unknown_size.create_uninitialised ~destination_directory
+    ;;
+
+    let init_or_reset t = With_header.Unknown_size.init_or_reset t Blob
+
+    let append_data t buf ~pos ~len =
+      With_header.Unknown_size.make_room t ~for_bytes:len;
+      Bigstring.blit
+        ~src:buf
+        ~src_pos:pos
+        ~dst:(With_header.Unknown_size.buf t)
+        ~dst_pos:(With_header.Unknown_size.pos t)
+        ~len;
+      With_header.Unknown_size.advance_pos t ~by:len
+    ;;
+
+    let written_so_far t = With_header.Unknown_size.written_so_far t
+    let finalise t = With_header.Unknown_size.finalise t
+    let abort t = With_header.Unknown_size.abort t
+  end
+
+  module Known_size = struct
+    type t = With_header.Known_size.t
+
+    let create_uninitialised ~destination_directory =
+      With_header.Known_size.create_uninitialised ~destination_directory
+    ;;
+
+    let init_or_reset t ~length = With_header.Known_size.init_or_reset t Blob ~length
+    let append_data t buf ~pos ~len = With_header.Known_size.append_data t buf ~pos ~len
+    let finalise t = With_header.Known_size.finalise t
+    let abort t = With_header.Known_size.abort t
   end
 end
 

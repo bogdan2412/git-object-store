@@ -35,25 +35,40 @@ module Raw : sig
   val abort : t -> unit Deferred.t
 end
 
-module For_unknown_contents_size : sig
-  (** The [For_unknown_contents_size] module buffers chunks of data until it
-      is fully read, prepends it with a header of the form
-      "[prefix][data length as decimal integer]\000" and uses the [Raw] module
-      to save it to disk.
-  *)
-  type t
+module With_header : sig
+  module Unknown_size : sig
+    (** The [With_header.Unknown_size] module buffers chunks of data until
+        fully read, prepends the data with a header of the form
+        "[object_type] [data length as decimal integer]\000" and saves
+        the object to disk.
+    *)
+    type t
 
-  val create_uninitialised : destination_directory:string -> t
-  val init_or_reset : t -> prefix:string -> unit Deferred.t
-  val double_buffer_space : t -> unit
-  val make_room : t -> for_bytes:int -> unit
-  val buf : t -> Bigstring.t
-  val pos : t -> int
-  val len : t -> int
-  val advance_pos : t -> by:int -> unit
-  val written_so_far : t -> int
-  val finalise : t -> Sha1.Raw.t Deferred.t
-  val abort : t -> unit Deferred.t
+    val create_uninitialised : destination_directory:string -> t
+    val init_or_reset : t -> Object_type.t -> unit Deferred.t
+    val double_buffer_space : t -> unit
+    val make_room : t -> for_bytes:int -> unit
+    val buf : t -> Bigstring.t
+    val pos : t -> int
+    val len : t -> int
+    val advance_pos : t -> by:int -> unit
+    val written_so_far : t -> int
+    val finalise : t -> Sha1.Raw.t Deferred.t
+    val abort : t -> unit Deferred.t
+  end
+
+  module Known_size : sig
+    (** The [With_header.Known_size] module writes out a header of the form
+        "[object_type] [data length as decimal integer]\000" and streams chunks
+        of data to an object file on disk. *)
+    type t
+
+    val create_uninitialised : destination_directory:string -> t
+    val init_or_reset : t -> Object_type.t -> length:int -> unit Deferred.t
+    val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
+    val finalise : t -> Sha1.Raw.t Deferred.t
+    val abort : t -> unit Deferred.t
+  end
 end
 
 module Commit : sig
