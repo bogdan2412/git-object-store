@@ -919,7 +919,12 @@ module Index = struct
       let delta_object_parser = Delta_object_parser.create () in
       let sha1_compute = Sha1.Compute.create_uninitialised () in
       let objects = index_objects ~pack_file_mmap ~items_in_pack in
-      Hashtbl.iter objects ~f:(fun object_ ->
+      let objects_in_pack_order = Array.of_list (Hashtbl.data objects) in
+      Array.sort
+        objects_in_pack_order
+        ~compare:
+          (Comparable.lift Int.compare ~f:(fun object_ -> object_.Object.pack_pos));
+      Array.iter objects_in_pack_order ~f:(fun object_ ->
         match object_.delta_parent with
         | Some _ -> ()
         | None -> dfs delta_object_parser sha1_compute object_ pack_file_mmap);
