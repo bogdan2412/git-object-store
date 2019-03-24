@@ -21,14 +21,14 @@ open Async
 module Raw : sig
   type t
 
-  val create_uninitialised : destination_directory:string -> t
+  val create_uninitialised : object_directory:string -> t
   val init_or_reset : t -> unit Deferred.t
   val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
   val finalise : t -> Sha1.Raw.t Deferred.t
   val abort : t -> unit Deferred.t
 end = struct
   type t =
-    { destination_directory : string
+    { object_directory : string
     ; mutable temp_file_name : string
     ; mutable writer : Writer.t
     ; mutable sha1_compute : [`Initialised] Sha1.Compute.t
@@ -36,7 +36,7 @@ end = struct
     ; mutable initialised : bool
     }
 
-  let create_uninitialised ~destination_directory =
+  let create_uninitialised ~object_directory =
     let temp_file_name = "/dev/stdout" in
     let writer = Lazy.force Writer.stdout in
     let sha1_compute =
@@ -50,7 +50,7 @@ end = struct
       lazy
         { zlib_deflate = Lazy.force zlib_deflate
         ; sha1_compute
-        ; destination_directory
+        ; object_directory
         ; temp_file_name
         ; writer
         ; initialised = false
@@ -61,7 +61,7 @@ end = struct
 
   let init_or_reset t =
     let temp_file_name =
-      Filename.temp_file ~in_dir:t.destination_directory "write-in-progress" ""
+      Filename.temp_file ~in_dir:t.object_directory "write-in-progress" ""
     in
     let%map writer = Writer.open_file temp_file_name in
     t.temp_file_name <- temp_file_name;
@@ -91,7 +91,7 @@ end = struct
     let sha1_raw = Sha1.Raw.Volatile.non_volatile (Sha1.Compute.get_raw sha1_compute) in
     let dir, file =
       let str = Sha1.Hex.Volatile.to_string sha1_hex in
-      ( Filename.concat t.destination_directory (String.sub str ~pos:0 ~len:2)
+      ( Filename.concat t.object_directory (String.sub str ~pos:0 ~len:2)
       , String.sub str ~pos:2 ~len:(Sha1.Hex.length - 2) )
     in
     let%bind () = Unix.mkdir ~p:() dir in
@@ -136,7 +136,7 @@ module With_header = struct
   module Unknown_size : sig
     type t
 
-    val create_uninitialised : destination_directory:string -> t
+    val create_uninitialised : object_directory:string -> t
     val init_or_reset : t -> Object_type.t -> unit Deferred.t
     val double_buffer_space : t -> unit
     val make_room : t -> for_bytes:int -> unit
@@ -156,8 +156,8 @@ module With_header = struct
       ; mutable pos : int
       }
 
-    let create_uninitialised ~destination_directory =
-      { raw = Raw.create_uninitialised ~destination_directory
+    let create_uninitialised ~object_directory =
+      { raw = Raw.create_uninitialised ~object_directory
       ; object_type = ""
       ; buf = Bigstring.create (if Core.am_running_inline_test then 1 else 1 lsl 15)
       ; start = 0
@@ -218,7 +218,7 @@ module With_header = struct
   module Known_size : sig
     type t
 
-    val create_uninitialised : destination_directory:string -> t
+    val create_uninitialised : object_directory:string -> t
     val init_or_reset : t -> Object_type.t -> length:int -> unit Deferred.t
     val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
     val finalise : t -> Sha1.Raw.t Deferred.t
@@ -231,8 +231,8 @@ module With_header = struct
       ; mutable written : int
       }
 
-    let create_uninitialised ~destination_directory =
-      { raw = Raw.create_uninitialised ~destination_directory
+    let create_uninitialised ~object_directory =
+      { raw = Raw.create_uninitialised ~object_directory
       ; buf = Bigstring.create 32
       ; expected = 0
       ; written = 0
@@ -282,8 +282,8 @@ module Commit_ = Commit
 module Commit = struct
   type t = With_header.Unknown_size.t
 
-  let create ~destination_directory =
-    With_header.Unknown_size.create_uninitialised ~destination_directory
+  let create ~object_directory =
+    With_header.Unknown_size.create_uninitialised ~object_directory
   ;;
 
   let write t commit =
@@ -301,8 +301,8 @@ module Commit = struct
     With_header.Unknown_size.finalise t
   ;;
 
-  let write' ~destination_directory commit =
-    let t = create ~destination_directory in
+  let write' ~object_directory commit =
+    let t = create ~object_directory in
     write t commit
   ;;
 end
@@ -312,8 +312,8 @@ module Tag_ = Tag
 module Tag = struct
   type t = With_header.Unknown_size.t
 
-  let create ~destination_directory =
-    With_header.Unknown_size.create_uninitialised ~destination_directory
+  let create ~object_directory =
+    With_header.Unknown_size.create_uninitialised ~object_directory
   ;;
 
   let write t tag =
@@ -331,8 +331,8 @@ module Tag = struct
     With_header.Unknown_size.finalise t
   ;;
 
-  let write' ~destination_directory tag =
-    let t = create ~destination_directory in
+  let write' ~object_directory tag =
+    let t = create ~object_directory in
     write t tag
   ;;
 end
@@ -340,8 +340,8 @@ end
 module Tree = struct
   type t = With_header.Unknown_size.t
 
-  let create_uninitialised ~destination_directory =
-    With_header.Unknown_size.create_uninitialised ~destination_directory
+  let create_uninitialised ~object_directory =
+    With_header.Unknown_size.create_uninitialised ~object_directory
   ;;
 
   let init_or_reset t = With_header.Unknown_size.init_or_reset t Tree
@@ -377,8 +377,8 @@ module Blob = struct
   module Unknown_size = struct
     type t = With_header.Unknown_size.t
 
-    let create_uninitialised ~destination_directory =
-      With_header.Unknown_size.create_uninitialised ~destination_directory
+    let create_uninitialised ~object_directory =
+      With_header.Unknown_size.create_uninitialised ~object_directory
     ;;
 
     let init_or_reset t = With_header.Unknown_size.init_or_reset t Blob
@@ -402,8 +402,8 @@ module Blob = struct
   module Known_size = struct
     type t = With_header.Known_size.t
 
-    let create_uninitialised ~destination_directory =
-      With_header.Known_size.create_uninitialised ~destination_directory
+    let create_uninitialised ~object_directory =
+      With_header.Known_size.create_uninitialised ~object_directory
     ;;
 
     let init_or_reset t ~length = With_header.Known_size.init_or_reset t Blob ~length
@@ -414,8 +414,8 @@ module Blob = struct
 end
 
 let%expect_test "write known_size blob" =
-  Expect_test_helpers.with_temp_dir (fun destination_directory ->
-    let t = Blob.Known_size.create_uninitialised ~destination_directory in
+  Expect_test_helpers.with_temp_dir (fun object_directory ->
+    let t = Blob.Known_size.create_uninitialised ~object_directory in
     let reader = Git_object_reader.Expect_test_helpers.blob_reader () in
     let write_blob blob =
       let%bind () = Blob.Known_size.init_or_reset t ~length:(String.length blob) in
@@ -430,7 +430,7 @@ let%expect_test "write known_size blob" =
     let%bind () = write_blob "first file\n" in
     let%bind () = [%expect {| 303ff981c488b812b6215f7db7920dedb3b59d9a |}] in
     let expected_file_path =
-      (destination_directory ^/ "30") ^/ "3ff981c488b812b6215f7db7920dedb3b59d9a"
+      (object_directory ^/ "30") ^/ "3ff981c488b812b6215f7db7920dedb3b59d9a"
     in
     let%bind contents = Reader.file_contents expected_file_path in
     printf "%S" contents;
@@ -444,7 +444,7 @@ let%expect_test "write known_size blob" =
     let%bind () = write_blob "second file\n" in
     let%bind () = [%expect {| 1c59427adc4b205a270d8f810310394962e79a8b |}] in
     let expected_file_path =
-      (destination_directory ^/ "1c") ^/ "59427adc4b205a270d8f810310394962e79a8b"
+      (object_directory ^/ "1c") ^/ "59427adc4b205a270d8f810310394962e79a8b"
     in
     let%bind contents = Reader.file_contents expected_file_path in
     printf "%S" contents;
@@ -459,8 +459,8 @@ let%expect_test "write known_size blob" =
 ;;
 
 let%expect_test "write unknown_size blob" =
-  Expect_test_helpers.with_temp_dir (fun destination_directory ->
-    let t = Blob.Unknown_size.create_uninitialised ~destination_directory in
+  Expect_test_helpers.with_temp_dir (fun object_directory ->
+    let t = Blob.Unknown_size.create_uninitialised ~object_directory in
     let reader = Git_object_reader.Expect_test_helpers.blob_reader () in
     let write_blob blob =
       let%bind () = Blob.Unknown_size.init_or_reset t in
@@ -475,7 +475,7 @@ let%expect_test "write unknown_size blob" =
     let%bind () = write_blob "first file\n" in
     let%bind () = [%expect {| 303ff981c488b812b6215f7db7920dedb3b59d9a |}] in
     let expected_file_path =
-      (destination_directory ^/ "30") ^/ "3ff981c488b812b6215f7db7920dedb3b59d9a"
+      (object_directory ^/ "30") ^/ "3ff981c488b812b6215f7db7920dedb3b59d9a"
     in
     let%bind contents = Reader.file_contents expected_file_path in
     printf "%S" contents;
@@ -489,7 +489,7 @@ let%expect_test "write unknown_size blob" =
     let%bind () = write_blob "second file\n" in
     let%bind () = [%expect {| 1c59427adc4b205a270d8f810310394962e79a8b |}] in
     let expected_file_path =
-      (destination_directory ^/ "1c") ^/ "59427adc4b205a270d8f810310394962e79a8b"
+      (object_directory ^/ "1c") ^/ "59427adc4b205a270d8f810310394962e79a8b"
     in
     let%bind contents = Reader.file_contents expected_file_path in
     printf "%S" contents;
@@ -504,14 +504,14 @@ let%expect_test "write unknown_size blob" =
 ;;
 
 let%expect_test "write commit" =
-  Expect_test_helpers.with_temp_dir (fun destination_directory ->
-    let t = Commit.create ~destination_directory in
+  Expect_test_helpers.with_temp_dir (fun object_directory ->
+    let t = Commit.create ~object_directory in
     let reader = Git_object_reader.Expect_test_helpers.commit_reader () in
     let%bind sha1 = Commit.write t Commit_.For_testing.example_commit in
     printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
     let%bind () = [%expect {| 3678df8b9ac798bf8a19b6477254b0ca24a20954 |}] in
     let expected_file_path =
-      (destination_directory ^/ "36") ^/ "78df8b9ac798bf8a19b6477254b0ca24a20954"
+      (object_directory ^/ "36") ^/ "78df8b9ac798bf8a19b6477254b0ca24a20954"
     in
     let%bind contents = Reader.file_contents expected_file_path in
     printf "%S" contents;
@@ -579,7 +579,7 @@ let%expect_test "write commit" =
     printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
     let%bind () = [%expect {| d2ef8c710416f38bdf6e8487630486830edc6c7f |}] in
     let expected_file_path =
-      (destination_directory ^/ "d2") ^/ "ef8c710416f38bdf6e8487630486830edc6c7f"
+      (object_directory ^/ "d2") ^/ "ef8c710416f38bdf6e8487630486830edc6c7f"
     in
     let%bind contents = Reader.file_contents expected_file_path in
     printf "%S" contents;
@@ -602,8 +602,8 @@ let%expect_test "write commit" =
 ;;
 
 let%expect_test "write tree" =
-  Expect_test_helpers.with_temp_dir (fun destination_directory ->
-    let t = Tree.create_uninitialised ~destination_directory in
+  Expect_test_helpers.with_temp_dir (fun object_directory ->
+    let t = Tree.create_uninitialised ~object_directory in
     let reader = Git_object_reader.Expect_test_helpers.tree_reader () in
     let%bind () = Tree.init_or_reset t in
     Tree.write_tree_line
@@ -630,7 +630,7 @@ let%expect_test "write tree" =
     printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
     let%bind () = [%expect {| b39daecaf9bc405deea72ff4dcbd5bb16613eb1f |}] in
     let expected_file_path =
-      (destination_directory ^/ "b3") ^/ "9daecaf9bc405deea72ff4dcbd5bb16613eb1f"
+      (object_directory ^/ "b3") ^/ "9daecaf9bc405deea72ff4dcbd5bb16613eb1f"
     in
     let%bind contents = Reader.file_contents expected_file_path in
     printf "%S" contents;
@@ -657,7 +657,7 @@ let%expect_test "write tree" =
     printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
     let%bind () = [%expect {| d0b2476d5a6fc7bced4f6ef841b7e7022fad0493 |}] in
     let expected_file_path =
-      (destination_directory ^/ "d0") ^/ "b2476d5a6fc7bced4f6ef841b7e7022fad0493"
+      (object_directory ^/ "d0") ^/ "b2476d5a6fc7bced4f6ef841b7e7022fad0493"
     in
     let%bind contents = Reader.file_contents expected_file_path in
     printf "%S" contents;
@@ -671,14 +671,14 @@ let%expect_test "write tree" =
 ;;
 
 let%expect_test "write tag" =
-  Expect_test_helpers.with_temp_dir (fun destination_directory ->
-    let t = Tag.create ~destination_directory in
+  Expect_test_helpers.with_temp_dir (fun object_directory ->
+    let t = Tag.create ~object_directory in
     let reader = Git_object_reader.Expect_test_helpers.tag_reader () in
     let%bind sha1 = Tag.write t Tag_.For_testing.example_tag in
     printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
     let%bind () = [%expect {| ac5f368017e73cac599c7dfd77bd36da2b816eaf |}] in
     let expected_file_path =
-      (destination_directory ^/ "ac") ^/ "5f368017e73cac599c7dfd77bd36da2b816eaf"
+      (object_directory ^/ "ac") ^/ "5f368017e73cac599c7dfd77bd36da2b816eaf"
     in
     let%bind contents = Reader.file_contents expected_file_path in
     printf "%S" contents;
@@ -717,7 +717,7 @@ let%expect_test "write tag" =
     printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
     let%bind () = [%expect {| 5cddf48d3977bd7688e0fdaf8a307cc9e99ba238 |}] in
     let expected_file_path =
-      (destination_directory ^/ "5c") ^/ "ddf48d3977bd7688e0fdaf8a307cc9e99ba238"
+      (object_directory ^/ "5c") ^/ "ddf48d3977bd7688e0fdaf8a307cc9e99ba238"
     in
     let%bind contents = Reader.file_contents expected_file_path in
     printf "%S" contents;

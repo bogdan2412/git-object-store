@@ -18,28 +18,33 @@
 open Core
 
 module Hex = struct
-  type t = string [@@deriving sexp_of]
+  module T = struct
+    type t = string [@@deriving compare, hash, sexp_of]
 
-  let length = 40
+    let length = 40
 
-  let of_string string =
-    if String.length string <> length
-    then
-      raise_s
-        [%message
-          "Expected string of different length"
-            ~expected_length:(length : int)
-            ~actual_length:(String.length string : int)];
-    if not
-         (String.for_all string ~f:(fun char ->
-            Char.between char ~low:'0' ~high:'9'
-            || Char.between char ~low:'a' ~high:'f'))
-    then failwith "Expected string made only out of characters [0-9a-f]";
-    string
-  ;;
+    let of_string string =
+      if String.length string <> length
+      then
+        raise_s
+          [%message
+            "Expected string of different length"
+              ~expected_length:(length : int)
+              ~actual_length:(String.length string : int)];
+      if not
+           (String.for_all string ~f:(fun char ->
+              Char.between char ~low:'0' ~high:'9'
+              || Char.between char ~low:'a' ~high:'f'))
+      then failwith "Expected string made only out of characters [0-9a-f]";
+      string
+    ;;
 
-  let to_string = Fn.id
-  let t_of_sexp = Fn.compose of_string [%of_sexp: string]
+    let to_string = Fn.id
+    let t_of_sexp = Fn.compose of_string [%of_sexp: string]
+  end
+
+  include T
+  include Hashable.Make (T)
 
   module Volatile = struct
     type t = bytes [@@deriving sexp_of]

@@ -1009,14 +1009,18 @@ let index_pack ~pack_file =
       Index.Builder.index_pack ~pack_file ~pack_file_mmap ~items_in_pack))
 ;;
 
+let validate_index t ~index =
+  if index < 0 || index >= t.items_in_pack
+  then
+    raise_s
+      [%message
+        "Invalid value for index" (index : int) ~items_in_pack:(t.items_in_pack : int)]
+;;
+
 let sha1 =
   let result = Sha1.Raw.Volatile.create () in
   fun t ~index ->
-    if index < 0 || index >= t.items_in_pack
-    then
-      raise_s
-        [%message
-          "Invalid value for index" (index : int) ~items_in_pack:(t.items_in_pack : int)];
+    validate_index t ~index;
     Bigstring.To_bytes.blit
       ~src:t.index.file_mmap
       ~src_pos:(Index.Section_pos.sha1 t.index.section_pos index)
@@ -1031,6 +1035,7 @@ let items_in_pack t = t.items_in_pack
 let pack_file_object_offset =
   let msb_mask = 1 lsl 31 in
   fun t ~index ->
+    validate_index t ~index;
     let offset =
       Bigstring.get_uint32_be
         t.index.file_mmap

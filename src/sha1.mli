@@ -22,8 +22,9 @@ module Hex : sig
 
   val length : int
 
-  include Stringable.S with type t := t
+  include Hashable.S with type t := t
   include Sexpable.S with type t := t
+  include Stringable.S with type t := t
 
   module Volatile :
   sig
