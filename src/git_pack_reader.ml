@@ -847,20 +847,20 @@ module Index = struct
         Fd.syscall_in_thread_exn ~name:"git-pack-mmap-file" fd (fun file_descr ->
           Bigstring.map_file ~shared:true file_descr index_file_size)
       in
-      Bigstring.set_uint32_le file_mmap ~pos:0 1666151679;
-      Bigstring.set_uint32_be file_mmap ~pos:4 2;
+      Bigstring.unsafe_set_uint32_le file_mmap ~pos:0 1666151679;
+      Bigstring.unsafe_set_uint32_be file_mmap ~pos:4 2;
       Array.iter objects_in_sha1_order ~f:(fun object_ ->
         let first_byte =
           (Sha1.Raw.to_string (Set_once.get_exn object_.sha1 [%here])).[0]
         in
         let pos = Section_pos.fanout section_pos first_byte in
-        Bigstring.set_uint32_be
+        Bigstring.set_uint32_be_exn
           file_mmap
           ~pos
           (Bigstring.get_uint32_be file_mmap ~pos + 1));
       for idx = 1 to 255 do
         let pos = Section_pos.fanout section_pos (Char.of_int_exn idx) in
-        Bigstring.set_uint32_be
+        Bigstring.set_uint32_be_exn
           file_mmap
           ~pos
           (Bigstring.get_uint32_be file_mmap ~pos:(pos - 4)
@@ -876,7 +876,7 @@ module Index = struct
           ~len:Sha1.Raw.length);
       Array.iteri objects_in_sha1_order ~f:(fun idx object_ ->
         let pos = Section_pos.crc32 section_pos idx in
-        Bigstring.set_uint32_be file_mmap ~pos object_.crc32);
+        Bigstring.set_uint32_be_exn file_mmap ~pos object_.crc32);
       Array.iteri objects_in_sha1_order ~f:(fun idx object_ ->
         let pos = Section_pos.offset section_pos idx in
         let offset_value =
@@ -884,13 +884,13 @@ module Index = struct
           then object_.pack_pos
           else (
             let big_offset = Map.find_exn uint64_offsets idx in
-            Bigstring.set_uint64_be
+            Bigstring.set_uint64_be_exn
               file_mmap
               ~pos:(Section_pos.uint64_offset section_pos big_offset)
               object_.pack_pos;
             big_offset lor (1 lsl 31))
         in
-        Bigstring.set_uint32_be file_mmap ~pos offset_value);
+        Bigstring.unsafe_set_uint32_be file_mmap ~pos offset_value);
       Bigstring.From_string.blit
         ~src:(Sha1.Raw.to_string pack_sha1)
         ~src_pos:0

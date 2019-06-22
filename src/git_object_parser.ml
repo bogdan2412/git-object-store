@@ -170,7 +170,7 @@ module Raw = struct
   let read_header_payload_length t ~from_offset ~on_length_read =
     if from_offset < t.len
     then
-      if Bigstring.get t.buf (t.pos + from_offset) = ' '
+      if Char.( = ) (Bigstring.get t.buf (t.pos + from_offset)) ' '
       then (
         let length = ref 0 in
         let pos = ref (t.pos + from_offset + 1) in
@@ -189,7 +189,8 @@ module Raw = struct
         done;
         if !pos <= max_pos
         then
-          if Bigstring.get t.buf !pos = '\000' && !pos <> t.pos + from_offset + 1
+          if Char.( = ) (Bigstring.get t.buf !pos) '\000'
+          && !pos <> t.pos + from_offset + 1
           then (
             on_length_read t ~payload_length:!length;
             pos := !pos + 1;

@@ -139,7 +139,7 @@ let finalise_exn t =
       let%map result = Unix.lseek fd (Int64.of_int_exn 8) ~mode:`Set in
       assert (Int64.(result = of_int_exn 8));
       let buf = Bigstring.create 4 in
-      Bigstring.set_uint32_be buf ~pos:0 t.items_in_pack;
+      Bigstring.set_uint32_be_exn buf ~pos:0 t.items_in_pack;
       Fd.syscall_exn fd (fun desc -> Bigstring.really_write desc buf))
   in
   let sha1 = Sha1.Compute.create_uninitialised () in

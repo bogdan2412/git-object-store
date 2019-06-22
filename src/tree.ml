@@ -48,7 +48,7 @@ let[@inline] mode_bytes_match ~bytes_0_to_3 ~bytes_4_to_5 ~byte_7 file_mode =
   if bytes_0_to_3 = mode_bytes_0_to_3 file_mode
   && bytes_4_to_5 = mode_bytes_4_to_5 file_mode
   then (
-    if mode_byte_7_should_be_space file_mode then assert (byte_7 = ' ');
+    if mode_byte_7_should_be_space file_mode then assert (Char.( = ) byte_7 ' ');
     true)
   else false
 ;;
@@ -83,7 +83,9 @@ let[@inline] unsafe_parse_mode buf ~pos =
           if mode_bytes_match ~bytes_0_to_3 ~bytes_4_to_5 ~byte_7 file_mode
           then file_mode
           else if (* Old repos sometimes use the now deprecated 100664 for Non_executable_file. *)
-            bytes_0_to_3 = 909127729 && bytes_4_to_5 = 13366 && byte_7 = ' '
+            bytes_0_to_3 = 909127729
+            && bytes_4_to_5 = 13366
+            && Char.( = ) byte_7 ' '
           then Non_executable_file
           else raise_s [%message "Invalid_tree_format"]))))
 ;;
@@ -111,12 +113,12 @@ module Git_object_payload_parser = struct
   let consume_payload_exn (state : State.t) buf ~pos ~len =
     while
       state.walked_without_finding_null < len
-      && Bigstring.get buf (pos + state.walked_without_finding_null) <> '\000'
+      && Char.( <> ) (Bigstring.get buf (pos + state.walked_without_finding_null)) '\000'
     do
       state.walked_without_finding_null <- state.walked_without_finding_null + 1
     done;
     if state.walked_without_finding_null + 1 + Sha1.Raw.length <= len
-    && Bigstring.get buf (pos + state.walked_without_finding_null) = '\000'
+    && Char.( = ) (Bigstring.get buf (pos + state.walked_without_finding_null)) '\000'
     then (
       let mode = unsafe_parse_mode buf ~pos in
       let name_offset = mode_length mode in
@@ -173,8 +175,8 @@ module Git_object_payload_formatter = struct
     if total_len > len
     then Write_result.need_more_space
     else (
-      Bigstring.set_uint32_le buf ~pos (mode_bytes_0_to_3 mode);
-      Bigstring.set_uint16_le buf ~pos:(pos + 4) (mode_bytes_4_to_5 mode);
+      Bigstring.unsafe_set_uint32_le buf ~pos (mode_bytes_0_to_3 mode);
+      Bigstring.unsafe_set_uint16_le buf ~pos:(pos + 4) (mode_bytes_4_to_5 mode);
       if mode_byte_7_should_be_space mode then Bigstring.set buf (pos + 6) ' ';
       Bigstring.From_string.blit
         ~src:name

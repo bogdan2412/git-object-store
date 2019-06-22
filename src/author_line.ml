@@ -27,7 +27,7 @@ type t =
 
 let parse_git_time_zone_exn string =
   assert (String.length string = 5);
-  assert (string.[0] = '+' || string.[0] = '-');
+  assert (Char.( = ) string.[0] '+' || Char.( = ) string.[0] '-');
   let sign, rest = string.[0], String.sub string ~pos:1 ~len:4 in
   assert (String.for_all rest ~f:(Char.between ~low:'0' ~high:'9'));
   let hours =
