@@ -19,7 +19,7 @@ open Core
 open Async
 open Git_object_store
 
-let read_git_object file =
+let read_git_object_file file =
   Monitor.try_with_or_error ~extract_exn:true (fun () ->
     let git_object_reader =
       Git_object_reader.create
@@ -81,12 +81,38 @@ let read_git_pack_file pack_file =
 
 let index_git_pack_file pack_file = Git_pack_reader.index_pack ~pack_file
 
-let read_git_object_command =
+let read_sha1_from_store ~object_directory sha1 =
+  let open Deferred.Or_error.Let_syntax in
+  let%bind git_unified_reader =
+    Git_unified_reader.create ~object_directory ~max_concurrent_reads:1
+  in
+  Monitor.try_with_or_error ~extract_exn:true (fun () ->
+    let open Deferred.Let_syntax in
+    Git_unified_reader.read_object
+      git_unified_reader
+      sha1
+      ~on_blob_size:(fun (_ : int) -> ())
+      ~on_blob_chunk:(fun buf ~pos ~len ->
+        Writer.write_bigstring (force Writer.stdout) ~pos ~len buf)
+      ~on_commit:(fun commit -> printf !"%{sexp: Commit.t}\n" commit)
+      ~on_tree_line:(fun mode sha1 ~name ->
+        printf
+          !"%19s    %{Sha1.Hex}    %s\n"
+          (Sexp.to_string_hum ([%sexp_of: File_mode.t] mode))
+          (Sha1.Raw.Volatile.to_hex sha1)
+          name)
+      ~on_tag:(fun tag -> printf !"%{sexp: Tag.t}\n" tag)
+      ~push_back:(fun () ->
+        let%bind () = Writer.flushed (force Writer.stdout) in
+        return `Ok))
+;;
+
+let read_git_object_file_command =
   Command.async_or_error
-    ~summary:"print git object"
+    ~summary:"print git object file"
     [%map_open.Command.Let_syntax
       let file = anon ("FILE" %: Filename.arg_type) in
-      fun () -> read_git_object file]
+      fun () -> read_git_object_file file]
 ;;
 
 let read_git_pack_file_command =
@@ -105,12 +131,23 @@ let index_git_pack_file_command =
       fun () -> index_git_pack_file file]
 ;;
 
+let read_sha1_from_store_command =
+  Command.async_or_error
+    ~summary:
+      "print git object identified by sha1 from either a raw object file or a pack file"
+    [%map_open.Command.Let_syntax
+      let sha1 = anon ("SHA1" %: sexp_conv [%of_sexp: Sha1.Hex.t])
+      and object_directory = anon ("OBJECT-DIRECTORY" %: Filename.arg_type) in
+      fun () -> read_sha1_from_store ~object_directory sha1]
+;;
+
 let command =
   Command.group
     ~summary:"git object store"
-    [ "read-object", read_git_object_command
+    [ "read-object-file", read_git_object_file_command
     ; "read-pack-file", read_git_pack_file_command
     ; "index-pack-file", index_git_pack_file_command
+    ; "read-sha1-from-store", read_sha1_from_store_command
     ]
 ;;
 

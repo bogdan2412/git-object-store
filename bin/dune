@@ -1,5 +1,5 @@
 (executable
- (name git_print_object)
+ (name git_util)
  (libraries
   async
   core
