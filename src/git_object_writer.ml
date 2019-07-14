@@ -346,7 +346,7 @@ module Tree = struct
 
   let init_or_reset t = With_header.Unknown_size.init_or_reset t Tree
 
-  let write_tree_line_gen write_tree_line t mode sha1 ~name =
+  let rec write_tree_line_gen write_tree_line t mode sha1 ~name =
     match
       ( write_tree_line
           mode
@@ -358,7 +358,9 @@ module Tree = struct
         : Tree.Git_object_payload_formatter.Write_result.t )
     with
     | Wrote { bytes } -> With_header.Unknown_size.advance_pos t ~by:bytes
-    | Need_more_space -> With_header.Unknown_size.double_buffer_space t
+    | Need_more_space ->
+      With_header.Unknown_size.double_buffer_space t;
+      write_tree_line_gen write_tree_line t mode sha1 ~name
   ;;
 
   let write_tree_line =
