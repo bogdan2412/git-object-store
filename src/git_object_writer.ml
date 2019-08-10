@@ -221,7 +221,7 @@ module With_header = struct
     val create_uninitialised : object_directory:string -> t
     val init_or_reset : t -> Object_type.t -> length:int -> unit Deferred.t
     val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
-    val finalise : t -> Sha1.Raw.t Deferred.t
+    val finalise_exn : t -> Sha1.Raw.t Deferred.t
     val abort : t -> unit Deferred.t
   end = struct
     type t =
@@ -262,7 +262,7 @@ module With_header = struct
       t.written <- t.written + len
     ;;
 
-    let finalise t =
+    let finalise_exn t =
       if t.expected <> t.written
       then
         raise_s
@@ -410,7 +410,7 @@ module Blob = struct
 
     let init_or_reset t ~length = With_header.Known_size.init_or_reset t Blob ~length
     let append_data t buf ~pos ~len = With_header.Known_size.append_data t buf ~pos ~len
-    let finalise t = With_header.Known_size.finalise t
+    let finalise_exn t = With_header.Known_size.finalise_exn t
     let abort t = With_header.Known_size.abort t
   end
 end
@@ -426,7 +426,7 @@ let%expect_test "write known_size blob" =
         (Bigstring.of_string blob)
         ~pos:0
         ~len:(String.length blob);
-      let%map sha1 = Blob.Known_size.finalise t in
+      let%map sha1 = Blob.Known_size.finalise_exn t in
       printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1)
     in
     let%bind () = write_blob "first file\n" in

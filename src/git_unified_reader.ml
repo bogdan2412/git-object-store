@@ -227,7 +227,9 @@ let with_on_disk_file t sha1 ~f =
          data
          ~pos:0
          ~len:(Bigstring.length data);
-       let%bind saved_sha1 = Git_object_writer.With_header.Known_size.finalise writer in
+       let%bind saved_sha1 =
+         Git_object_writer.With_header.Known_size.finalise_exn writer
+       in
        let saved_sha1 = Sha1.Raw.to_hex saved_sha1 in
        assert ([%compare.equal: Sha1.Hex.t] sha1 saved_sha1);
        Monitor.protect (fun () -> f path) ~finally:(fun () -> Unix.unlink path))

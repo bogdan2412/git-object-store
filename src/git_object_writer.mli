@@ -66,7 +66,10 @@ module With_header : sig
     val create_uninitialised : object_directory:string -> t
     val init_or_reset : t -> Object_type.t -> length:int -> unit Deferred.t
     val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
-    val finalise : t -> Sha1.Raw.t Deferred.t
+
+    (** Raises if appended data does not match the length passed into [init_or_reset] *)
+    val finalise_exn : t -> Sha1.Raw.t Deferred.t
+
     val abort : t -> unit Deferred.t
   end
 end
@@ -124,7 +127,10 @@ module Blob : sig
     val create_uninitialised : object_directory:string -> t
     val init_or_reset : t -> length:int -> unit Deferred.t
     val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
-    val finalise : t -> Sha1.Raw.t Deferred.t
+
+    (** Raises if appended data does not match the length passed into [init_or_reset] *)
+    val finalise_exn : t -> Sha1.Raw.t Deferred.t
+
     val abort : t -> unit Deferred.t
   end
 end
