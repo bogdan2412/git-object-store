@@ -96,7 +96,7 @@ module Git_object_payload_parser = struct
       { mutable walked_without_finding_null : int
       ; sha1 : Sha1.Raw.Volatile.t [@sexp_drop_if const true]
       ; emit_tree_line : File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit
-                                                                                [@sexp_drop_if const true]
+                         [@sexp_drop_if const true]
       }
     [@@deriving fields, sexp_of]
 

@@ -37,14 +37,14 @@ module Zstream = struct
 
   external inflate_process
     :  t
-      -> src:Bigstring.t
-      -> src_pos:int
-      -> src_len:int
-      -> dst:Bigstring.t
-      -> dst_pos:int
-      -> dst_len:int
-      -> finish:bool
-      -> bool
+    -> src:Bigstring.t
+    -> src_pos:int
+    -> src_len:int
+    -> dst:Bigstring.t
+    -> dst_pos:int
+    -> dst_len:int
+    -> finish:bool
+    -> bool
     = "git_zlib_inflate_process_bytecode" "git_zlib_inflate_process"
 
   external deflate_init : t -> unit = "git_zlib_deflate_init"
@@ -52,14 +52,14 @@ module Zstream = struct
 
   external deflate_process
     :  t
-      -> src:Bigstring.t
-      -> src_pos:int
-      -> src_len:int
-      -> dst:Bigstring.t
-      -> dst_pos:int
-      -> dst_len:int
-      -> finish:bool
-      -> bool
+    -> src:Bigstring.t
+    -> src_pos:int
+    -> src_len:int
+    -> dst:Bigstring.t
+    -> dst_pos:int
+    -> dst_len:int
+    -> finish:bool
+    -> bool
     = "git_zlib_deflate_process_bytecode" "git_zlib_deflate_process"
 end
 
