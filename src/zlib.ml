@@ -1,6 +1,11 @@
 open Core
 
-exception Error of { fn_name : string; msg : string; ret_code : int }
+exception
+  Error of
+    { fn_name : string
+    ; msg : string
+    ; ret_code : int
+    }
 [@@deriving sexp_of]
 
 let () =
