@@ -238,15 +238,17 @@ let with_on_disk_file t sha1 ~f =
 module Object_location = struct
   type t =
     | Unpacked_file of string
-    | In_pack_file of { pack_file : string; index : int }
+    | In_pack_file of
+        { pack_file : string
+        ; index : int
+        }
   [@@deriving sexp_of]
 end
 
 let all_objects_in_store t =
   let result = Sha1.Hex.Table.create () in
   let is_hex = function
-    | '0' .. '9'
-    | 'a' .. 'f' -> true
+    | '0' .. '9' | 'a' .. 'f' -> true
     | _ -> false
   in
   let%bind () =

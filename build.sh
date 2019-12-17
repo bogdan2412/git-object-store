@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -euo pipefail
+shopt -s globstar
 
 cd "$(dirname "$0")"
 ocamlformat -i ./**/*.ml ./**/*.mli || true

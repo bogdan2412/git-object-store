@@ -31,7 +31,7 @@ end = struct
     { object_directory : string
     ; mutable temp_file_name : string
     ; mutable writer : Writer.t
-    ; mutable sha1_compute : [`Initialised] Sha1.Compute.t
+    ; mutable sha1_compute : [ `Initialised ] Sha1.Compute.t
     ; zlib_deflate : Zlib.Deflate.t
     ; mutable initialised : bool
     }
@@ -348,14 +348,14 @@ module Tree = struct
 
   let rec write_tree_line_gen write_tree_line t mode sha1 ~name =
     match
-      ( write_tree_line
-          mode
-          sha1
-          ~name
-          (With_header.Unknown_size.buf t)
-          ~pos:(With_header.Unknown_size.pos t)
-          ~len:(With_header.Unknown_size.len t)
-        : Tree.Git_object_payload_formatter.Write_result.t )
+      (write_tree_line
+         mode
+         sha1
+         ~name
+         (With_header.Unknown_size.buf t)
+         ~pos:(With_header.Unknown_size.pos t)
+         ~len:(With_header.Unknown_size.len t)
+       : Tree.Git_object_payload_formatter.Write_result.t)
     with
     | Wrote { bytes } -> With_header.Unknown_size.advance_pos t ~by:bytes
     | Need_more_space ->
@@ -451,8 +451,7 @@ let%expect_test "write known_size blob" =
     let%bind contents = Reader.file_contents expected_file_path in
     printf "%S" contents;
     let%bind () =
-      [%expect
-        {| "x\156K\202\201OR04b(NM\206\207KQH\203\204I\229\002\000C\209\006i" |}]
+      [%expect {| "x\156K\202\201OR04b(NM\206\207KQH\203\204I\229\002\000C\209\006i" |}]
     in
     let%bind () = Git_object_reader.read_file reader ~file:expected_file_path in
     [%expect {|
@@ -496,8 +495,7 @@ let%expect_test "write unknown_size blob" =
     let%bind contents = Reader.file_contents expected_file_path in
     printf "%S" contents;
     let%bind () =
-      [%expect
-        {| "x\156K\202\201OR04b(NM\206\207KQH\203\204I\229\002\000C\209\006i" |}]
+      [%expect {| "x\156K\202\201OR04b(NM\206\207KQH\203\204I\229\002\000C\209\006i" |}]
     in
     let%bind () = Git_object_reader.read_file reader ~file:expected_file_path in
     [%expect {|

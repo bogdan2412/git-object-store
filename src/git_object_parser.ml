@@ -206,16 +206,10 @@ module Raw = struct
     then
       if Bigstring.get_uint32_le t.buf ~pos:t.pos = 1651469410
       then
-        read_header_payload_length
-          t
-          ~from_offset:4
-          ~on_length_read:set_state_reading_blob
+        read_header_payload_length t ~from_offset:4 ~on_length_read:set_state_reading_blob
       else if Bigstring.get_uint32_le t.buf ~pos:t.pos = 1701147252
       then
-        read_header_payload_length
-          t
-          ~from_offset:4
-          ~on_length_read:set_state_reading_tree
+        read_header_payload_length t ~from_offset:4 ~on_length_read:set_state_reading_tree
       else if Bigstring.get_uint32_le t.buf ~pos:t.pos = 1835888483
            && Bigstring.get_uint16_le t.buf ~pos:(t.pos + 4) = 29801
       then

@@ -285,8 +285,7 @@ end = struct
           if first_byte land 32 = 0
           then size, delta_pos
           else
-            ( size lor (Bigstring.get_uint8 t.delta_buf ~pos:delta_pos lsl 8)
-            , delta_pos + 1 )
+            size lor (Bigstring.get_uint8 t.delta_buf ~pos:delta_pos lsl 8), delta_pos + 1
         in
         assert (first_byte land 64 = 0);
         let size = if size = 0 then 0x10000 else size in
@@ -630,11 +629,11 @@ module Index = struct
           ; crc32 : int
           ; sha1 : Sexp.t
           ; delta_parent =
-              ( Option.map delta_parent ~f:(fun delta_parent -> delta_parent.pack_pos)
-                : int option )
+              (Option.map delta_parent ~f:(fun delta_parent -> delta_parent.pack_pos) : int
+                                                                                          option)
           ; delta_children =
-              ( List.map delta_children ~f:(fun delta_child -> delta_child.pack_pos)
-                : int list )
+              (List.map delta_children ~f:(fun delta_child -> delta_child.pack_pos) : int
+                                                                                        list)
           ; contents : Bigstring.t sexp_option
           }]
       ;;
@@ -822,8 +821,7 @@ module Index = struct
           object_.contents <- None
     ;;
 
-    let write_index_file ~index_file ~(objects_in_sha1_order : Object.t array) ~pack_sha1
-      =
+    let write_index_file ~index_file ~(objects_in_sha1_order : Object.t array) ~pack_sha1 =
       let items_in_pack = Array.length objects_in_sha1_order in
       let section_pos = Section_pos.create ~items_in_pack in
       let max_uint32_offset = (1 lsl 31) - 1 in
@@ -922,8 +920,7 @@ module Index = struct
       let objects_in_pack_order = Array.of_list (Hashtbl.data objects) in
       Array.sort
         objects_in_pack_order
-        ~compare:
-          (Comparable.lift Int.compare ~f:(fun object_ -> object_.Object.pack_pos));
+        ~compare:(Comparable.lift Int.compare ~f:(fun object_ -> object_.Object.pack_pos));
       Array.iter objects_in_pack_order ~f:(fun object_ ->
         match object_.delta_parent with
         | Some _ -> ()
@@ -1270,10 +1267,7 @@ let read_object =
       Base_object_parser.reset_for_commit t.base_object_parser ~payload_length ~on_commit;
       feed_parser_data t data_start_pos
     | Tree ->
-      Base_object_parser.reset_for_tree
-        t.base_object_parser
-        ~payload_length
-        ~on_tree_line;
+      Base_object_parser.reset_for_tree t.base_object_parser ~payload_length ~on_tree_line;
       feed_parser_data t data_start_pos
     | Blob ->
       Base_object_parser.reset_for_blob

@@ -26,8 +26,7 @@ module Hex : sig
   include Sexpable.S with type t := t
   include Stringable.S with type t := t
 
-  module Volatile :
-  sig
+  module Volatile : sig
     type non_volatile
     type t
 
@@ -56,8 +55,7 @@ module Raw : sig
   val to_hex : t -> Hex.t
   val to_hex_volatile : t -> Hex.Volatile.t -> unit
 
-  module Volatile :
-  sig
+  module Volatile : sig
     type non_volatile
     type t
 
@@ -79,10 +77,10 @@ end
 module Compute : sig
   type _ t
 
-  val create_uninitialised : unit -> [`Uninitialised] t
-  val init_or_reset : _ t -> [`Initialised] t
-  val process : [`Initialised] t -> Bigstring.t -> pos:int -> len:int -> unit
-  val finalise : [`Initialised] t -> [`Finalised] t
-  val get_hex : [`Finalised] t -> Hex.Volatile.t
-  val get_raw : [`Finalised] t -> Raw.Volatile.t
+  val create_uninitialised : unit -> [ `Uninitialised ] t
+  val init_or_reset : _ t -> [ `Initialised ] t
+  val process : [ `Initialised ] t -> Bigstring.t -> pos:int -> len:int -> unit
+  val finalise : [ `Initialised ] t -> [ `Finalised ] t
+  val get_hex : [ `Finalised ] t -> Hex.Volatile.t
+  val get_raw : [ `Finalised ] t -> Raw.Volatile.t
 end

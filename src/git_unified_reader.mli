@@ -47,7 +47,7 @@ val read_object
   -> on_commit:(Commit.t -> unit)
   -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
   -> on_tag:(Tag.t -> unit)
-  -> push_back:(unit -> [`Ok | `Reader_closed] Deferred.t)
+  -> push_back:(unit -> [ `Ok | `Reader_closed ] Deferred.t)
   -> unit Deferred.t
 
 (** [read_blob] is a convenience wrapper on top of [read_object] that raises if the type of
@@ -57,7 +57,7 @@ val read_blob
   -> Sha1.Hex.t
   -> on_size:(int -> unit)
   -> on_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
-  -> push_back:(unit -> [`Ok | `Reader_closed] Deferred.t)
+  -> push_back:(unit -> [ `Ok | `Reader_closed ] Deferred.t)
   -> unit Deferred.t
 
 (** [read_commit] is a convenience wrapper on top of [read_object] that raises if the type of
@@ -88,7 +88,10 @@ val with_on_disk_file : t -> Sha1.Hex.t -> f:(string -> 'a Deferred.t) -> 'a Def
 module Object_location : sig
   type t =
     | Unpacked_file of string
-    | In_pack_file of { pack_file : string; index : int }
+    | In_pack_file of
+        { pack_file : string
+        ; index : int
+        }
   [@@deriving sexp_of]
 end
 

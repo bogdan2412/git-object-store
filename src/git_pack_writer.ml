@@ -107,9 +107,7 @@ let add_object_exn t ~object_file =
   match%map
     Reader.with_file object_file ~f:(fun reader ->
       Reader.read_one_chunk_at_a_time reader ~handle_chunk:(fun buf ~pos ~len ->
-        let consumed =
-          Zlib.Inflate.process t.raw_object_zlib_inflate buf ~pos ~len
-        in
+        let consumed = Zlib.Inflate.process t.raw_object_zlib_inflate buf ~pos ~len in
         if consumed <> len then return (`Stop ()) else return `Continue))
   with
   | `Eof ->

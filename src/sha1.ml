@@ -58,8 +58,7 @@ module Hex = struct
       for idx = 0 to length - 1 do
         let char = Bytes.get t idx in
         if not
-             (Char.between char ~low:'0' ~high:'9'
-              || Char.between char ~low:'a' ~high:'f')
+             (Char.between char ~low:'0' ~high:'9' || Char.between char ~low:'a' ~high:'f')
         then valid := false
       done;
       !valid
@@ -96,8 +95,7 @@ module Raw = struct
   include Comparable.Make (T)
 
   let char_hex n =
-    Char.unsafe_of_int
-      (n + if Int.(n < 10) then Char.to_int '0' else Char.to_int 'a' - 10)
+    Char.unsafe_of_int (n + if Int.(n < 10) then Char.to_int '0' else Char.to_int 'a' - 10)
   ;;
 
   let to_hex_volatile' idx t result =
@@ -175,7 +173,7 @@ module Compute = struct
     ; result_hex : Hex.Volatile.t
     }
 
-  let create_uninitialised () : [`Uninitialised] t =
+  let create_uninitialised () : [ `Uninitialised ] t =
     { sha1_ctx = Bytes.create (Digestif_native.SHA1.ctx_size ())
     ; result_raw = Raw.Volatile.create ()
     ; result_hex = Hex.Volatile.create ()
@@ -184,19 +182,19 @@ module Compute = struct
 
   let init_or_reset (t : _ t) =
     Digestif_native.SHA1.Bigstring.init t.sha1_ctx;
-    (t :> [`Initialised] t)
+    (t :> [ `Initialised ] t)
   ;;
 
-  let process (t : [`Initialised] t) buf ~pos ~len =
+  let process (t : [ `Initialised ] t) buf ~pos ~len =
     Digestif_native.SHA1.Bigstring.update t.sha1_ctx buf pos len
   ;;
 
-  let finalise (t : [`Initialised] t) =
+  let finalise (t : [ `Initialised ] t) =
     Digestif_native.SHA1.Bytes.finalize t.sha1_ctx t.result_raw 0;
     Raw.Volatile.to_hex_volatile t.result_raw t.result_hex;
-    (t :> [`Finalised] t)
+    (t :> [ `Finalised ] t)
   ;;
 
-  let get_raw (t : [`Finalised] t) = t.result_raw
-  let get_hex (t : [`Finalised] t) = t.result_hex
+  let get_raw (t : [ `Finalised ] t) = t.result_raw
+  let get_hex (t : [ `Finalised ] t) = t.result_hex
 end
