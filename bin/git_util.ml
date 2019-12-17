@@ -110,7 +110,7 @@ let read_sha1_from_store ~object_directory sha1 =
 let read_git_object_file_command =
   Command.async_or_error
     ~summary:"print git object file"
-    [%map_open.Command.Let_syntax
+    [%map_open.Command
       let file = anon ("FILE" %: Filename.arg_type) in
       fun () -> read_git_object_file file]
 ;;
@@ -118,7 +118,7 @@ let read_git_object_file_command =
 let read_git_pack_file_command =
   Command.async_or_error
     ~summary:"print git pack file"
-    [%map_open.Command.Let_syntax
+    [%map_open.Command
       let file = anon ("FILE" %: Filename.arg_type) in
       fun () -> read_git_pack_file file]
 ;;
@@ -126,7 +126,7 @@ let read_git_pack_file_command =
 let index_git_pack_file_command =
   Command.async_or_error
     ~summary:"generate index for git pack file"
-    [%map_open.Command.Let_syntax
+    [%map_open.Command
       let file = anon ("FILE" %: Filename.arg_type) in
       fun () -> index_git_pack_file file]
 ;;
@@ -135,7 +135,7 @@ let read_sha1_from_store_command =
   Command.async_or_error
     ~summary:
       "print git object identified by sha1 from either a raw object file or a pack file"
-    [%map_open.Command.Let_syntax
+    [%map_open.Command
       let sha1 = anon ("SHA1" %: sexp_conv [%of_sexp: Sha1.Hex.t])
       and object_directory = anon ("OBJECT-DIRECTORY" %: Filename.arg_type) in
       fun () -> read_sha1_from_store ~object_directory sha1]

@@ -269,7 +269,7 @@ module For_testing = struct
              ~len
          with
          | Wrote { bytes } ->
-           ignore (Queue.dequeue_exn lines);
+           ignore (Queue.dequeue_exn lines : File_mode.t * Sha1.Hex.t * string);
            write_out buf ~pos:(pos + bytes) ~len:(len - bytes)
          | Need_more_space ->
            let new_buf = Bigstring.create (Bigstring.length buf * 2) in

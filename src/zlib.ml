@@ -20,7 +20,7 @@ open Core
 exception Error of { fn_name : string; msg : string; ret_code : int }
 [@@deriving sexp_of]
 
-let _ =
+let () =
   Callback.register_exception
     "Zlib.Error"
     (Error { fn_name = ""; msg = ""; ret_code = 0 })
