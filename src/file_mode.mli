@@ -1,6 +1,6 @@
 (** Library for manipulating a git object store via OCaml.
 
-    Copyright (C) 2019  Bogdan-Cristian Tataroiu
+    Copyright (C) 2019-2020  Bogdan-Cristian Tataroiu
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,4 +23,4 @@ type t =
   | Link
   | Directory
   | Git_submodule
-[@@deriving sexp_of]
+[@@deriving sexp]

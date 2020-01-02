@@ -1,6 +1,6 @@
 (** Library for manipulating a git object store via OCaml.
 
-    Copyright (C) 2019  Bogdan-Cristian Tataroiu
+    Copyright (C) 2019-2020  Bogdan-Cristian Tataroiu
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@ type t =
   ; gpg_signature : string option
   ; description : string
   }
-[@@deriving sexp_of]
+[@@deriving sexp]
 
 let split_first_line_exn string = String.lsplit2_exn ~on:'\n' string
 

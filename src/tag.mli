@@ -1,6 +1,6 @@
 (** Library for manipulating a git object store via OCaml.
 
-    Copyright (C) 2019  Bogdan-Cristian Tataroiu
+    Copyright (C) 2019-2020  Bogdan-Cristian Tataroiu
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@ type t =
   ; tagger : Author_line.t option
   ; description : string
   }
-[@@deriving sexp_of]
+[@@deriving sexp]
 
 val parse_git_object_payload_exn : string -> t
 val format_as_git_object_payload : t -> string
