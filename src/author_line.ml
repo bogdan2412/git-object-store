@@ -6,7 +6,7 @@ type t =
   ; timestamp : Time_ns.t
   ; zone : Time_ns.Zone.t
   }
-[@@deriving sexp_of]
+[@@deriving sexp]
 
 let parse_git_time_zone_exn string =
   assert (String.length string = 5);

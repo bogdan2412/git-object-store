@@ -7,7 +7,7 @@ type t =
   ; tagger : Author_line.t option
   ; description : string
   }
-[@@deriving sexp_of]
+[@@deriving sexp]
 
 val parse_git_object_payload_exn : string -> t
 val format_as_git_object_payload : t -> string

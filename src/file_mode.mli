@@ -6,4 +6,4 @@ type t =
   | Link
   | Directory
   | Git_submodule
-[@@deriving sexp_of]
+[@@deriving sexp]
