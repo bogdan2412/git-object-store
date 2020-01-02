@@ -10,7 +10,7 @@ type t =
   ; gpg_signature : string option
   ; description : string
   }
-[@@deriving sexp_of]
+[@@deriving sexp]
 
 let split_first_line_exn string = String.lsplit2_exn ~on:'\n' string
 
