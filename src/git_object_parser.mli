@@ -17,10 +17,16 @@
 
 open Core
 
-type t [@@deriving sexp_of]
+type _ t [@@deriving sexp_of]
 
 (** [create] returns a new parser that can be fed git object data incrementally and
-    reused to parse multiple git objects. *)
+    reused to parse multiple git objects.
+
+    If [Validate_sha1] is passed, then the [finalise] method will expect a [Sha1.Hex.t]
+    to be passed in and the parser will assert that the passed in data matches the
+    checksum provided.  Otherwise, if [Do_not_validate_sha1] is passed, [finalise] only
+    expects a [unit] argument and does not spend time maintaining the [Sha1] sum of the
+    data. *)
 val create
   :  on_blob_size:(int -> unit)
   -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
@@ -28,59 +34,60 @@ val create
   -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
   -> on_tag:(Tag.t -> unit)
   -> on_error:(Error.t -> unit)
-  -> t
+  -> 'Sha1_validation Sha1_validation.t
+  -> 'Sha1_validation t
 
 (** [append_data] should be called to feed the parser a chunk of the git object data
     for the currently parsed object. Some of the callbacks which were specified in
     [create] might be called. *)
-val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
+val append_data : _ t -> Bigstring.t -> pos:int -> len:int -> unit
 
 (** [finalise] should be called once the entire git object has been fed to the
     parser. Some of the callbacks which were specified in [create] might be called. *)
-val finalise : t -> unit
+val finalise : 'Sha1_validation t -> 'Sha1_validation -> unit
 
 (** [reset] should be called to start parsing a new object. *)
-val reset : t -> unit
+val reset : _ t -> unit
 
-(** [set_state_reading_blob] can be called after [reset] to signal to the parser that
-    what follows is a blob of the specified length. *)
-val set_state_reading_blob : t -> payload_length:int -> unit
+(** [reset_for_reading_blob] should be called to start parsing a new blob object of the
+    specified length. *)
+val reset_for_reading_blob : _ t -> payload_length:int -> unit
 
-(** [set_state_reading_commit] can be called after [reset] to signal to the parser that
-    what follows is a commit of the specified length. *)
-val set_state_reading_commit : t -> payload_length:int -> unit
+(** [reset_for_reading_commit] should be called to start parsing a new tree object of the
+    specified length. *)
+val reset_for_reading_commit : _ t -> payload_length:int -> unit
 
-(** [set_state_reading_tree] can be called after [reset] to signal to the parser that
-    what follows is a tree of the specified length. *)
-val set_state_reading_tree : t -> payload_length:int -> unit
+(** [reset_for_reading_tree] should be called to start parsing a new tree object of the
+    specified length. *)
+val reset_for_reading_tree : _ t -> payload_length:int -> unit
 
-(** [set_state_reading_tag] can be called after [reset] to signal to the parser that
-    what follows is a tag of the specified length. *)
-val set_state_reading_tag : t -> payload_length:int -> unit
+(** [reset_for_reading_tag] should be called to start parsing a new tag object of the
+    specified length. *)
+val reset_for_reading_tag : _ t -> payload_length:int -> unit
 
 (** Change the callback that gets called while parsing [blob] objects. *)
 val set_on_blob
-  :  t
+  :  _ t
   -> on_size:(int -> unit)
   -> on_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
   -> unit
 
 (** Change the callback that gets called while parsing [commit] objects. *)
-val set_on_commit : t -> (Commit.t -> unit) -> unit
+val set_on_commit : _ t -> (Commit.t -> unit) -> unit
 
 (** Change the callback that gets called while parsing [tree] objects. *)
 val set_on_tree_line
-  :  t
+  :  _ t
   -> (File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
   -> unit
 
 (** Change the callback that gets called while parsing [tag] objects. *)
-val set_on_tag : t -> (Tag.t -> unit) -> unit
+val set_on_tag : _ t -> (Tag.t -> unit) -> unit
 
 (** Lower-level module that allows one to obtain raw payload data rather than have it be
     parsed. *)
 module Raw : sig
-  type t
+  type _ t
 
   (** [create] returns a new raw parser that can be fed git object data incrementally and
       reused to parse multiple git objects.
@@ -94,14 +101,20 @@ module Raw : sig
 
       Upon [finalise] being called, the [on_payload_chunk] will be called a final time
       with a value of [~final:true]. This final call may have a [len] of 0.
-  *)
+
+      If [Validate_sha1] is passed, then the [finalise] method will expect a [Sha1.Hex.t]
+      to be passed in and the parser will assert that the passed in data matches the
+      checksum provided.  Otherwise, if [Do_not_validate_sha1] is passed, [finalise] only
+      expects a [unit] argument and does not spend time maintaining the [Sha1] sum of the
+      data. *)
   val create
     :  on_header:(Object_type.t -> size:int -> unit)
     -> on_payload_chunk:(Bigstring.t -> pos:int -> len:int -> final:bool -> int)
     -> on_error:(Error.t -> unit)
-    -> t
+    -> 'Sha1_validation Sha1_validation.t
+    -> 'Sha1_validation t
 
-  val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
-  val finalise : t -> unit
-  val reset : t -> unit
+  val append_data : _ t -> Bigstring.t -> pos:int -> len:int -> unit
+  val finalise : 'Sha1_validation t -> 'Sha1_validation -> unit
+  val reset : _ t -> unit
 end

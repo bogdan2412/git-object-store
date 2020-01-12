@@ -21,16 +21,21 @@
 open Core
 open Async
 
-type t
+type _ t
 
 (** Create a unified reader that reads from the given [object_directory].
-    [max_concurrent_reads] throttles how many objects may be read from disk at the same time. *)
+    [max_concurrent_reads] throttles how many objects may be read from disk at the same time.
+
+    If [Validate_sha1] is passed, then the store will assert that the objects it reads
+    match the expected checksum.  Otherwise, if [Do_not_validate_sha1] is passed, the
+    store will not spend time maintaining the [Sha1] sum of the data. *)
 val create
   :  object_directory:string
   -> max_concurrent_reads:int
-  -> t Or_error.t Deferred.t
+  -> 'Sha1_validation Sha1_validation.t
+  -> 'Sha1_validation t Or_error.t Deferred.t
 
-val object_directory : t -> string
+val object_directory : _ t -> string
 
 (** [read_object] reads an object with the given SHA1 hash and calls the relevant callbacks
     depending on the kind of object.
@@ -40,7 +45,7 @@ val object_directory : t -> string
     The [push_back] callback is called every time we read a chunk of data and it gives the
     client an opportunity to push back on reading. *)
 val read_object
-  :  t
+  :  _ t
   -> Sha1.Hex.t
   -> on_blob_size:(int -> unit)
   -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
@@ -53,7 +58,7 @@ val read_object
 (** [read_blob] is a convenience wrapper on top of [read_object] that raises if the type of
     object is not Blob. *)
 val read_blob
-  :  t
+  :  _ t
   -> Sha1.Hex.t
   -> on_size:(int -> unit)
   -> on_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
@@ -62,19 +67,19 @@ val read_blob
 
 (** [read_commit] is a convenience wrapper on top of [read_object] that raises if the type of
     object is not Commit. *)
-val read_commit : t -> Sha1.Hex.t -> on_commit:(Commit.t -> unit) -> unit Deferred.t
+val read_commit : _ t -> Sha1.Hex.t -> on_commit:(Commit.t -> unit) -> unit Deferred.t
 
 (** [read_tree] is a convenience wrapper on top of [read_object] that raises if the type of
     object is not Tree. *)
 val read_tree
-  :  t
+  :  _ t
   -> Sha1.Hex.t
   -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
   -> unit Deferred.t
 
 (** [read_tag] is a convenience wrapper on top of [read_object] that raises if the type of
     object is not Tag. *)
-val read_tag : t -> Sha1.Hex.t -> on_tag:(Tag.t -> unit) -> unit Deferred.t
+val read_tag : _ t -> Sha1.Hex.t -> on_tag:(Tag.t -> unit) -> unit Deferred.t
 
 (** Looks for an object with the given SHA1 hash and calls [f] with an on-disk file containing
     the object.
@@ -83,7 +88,7 @@ val read_tag : t -> Sha1.Hex.t -> on_tag:(Tag.t -> unit) -> unit Deferred.t
 
     The file will not necessarily persist after [f] is called as packed objects are written
     to a temporary file that is deleted after [f] is called. *)
-val with_on_disk_file : t -> Sha1.Hex.t -> f:(string -> 'a Deferred.t) -> 'a Deferred.t
+val with_on_disk_file : _ t -> Sha1.Hex.t -> f:(string -> 'a Deferred.t) -> 'a Deferred.t
 
 module Object_location : sig
   type t =
@@ -95,4 +100,79 @@ module Object_location : sig
   [@@deriving sexp_of]
 end
 
-val all_objects_in_store : t -> Object_location.t list Sha1.Hex.Table.t Deferred.t
+val all_objects_in_store : _ t -> Object_location.t list Sha1.Hex.Table.t Deferred.t
+
+module Packed : sig
+  type t
+
+  (** Create a unified reader that reads from the given [object_directory].
+      [max_concurrent_reads] throttles how many objects may be read from disk at the same time.
+
+      If [Validate_sha1] is passed, then the store will assert that the objects it reads
+      match the expected checksum.  Otherwise, if [Do_not_validate_sha1] is passed, the
+      store will not spend time maintaining the [Sha1] sum of the data. *)
+  val create
+    :  object_directory:string
+    -> max_concurrent_reads:int
+    -> 'Sha1_validation Sha1_validation.t
+    -> t Or_error.t Deferred.t
+
+  val object_directory : t -> string
+
+  (** [read_object] reads an object with the given SHA1 hash and calls the relevant callbacks
+      depending on the kind of object.
+
+      Raises if no object with the given hash exists.
+
+      The [push_back] callback is called every time we read a chunk of data and it gives the
+      client an opportunity to push back on reading. *)
+  val read_object
+    :  t
+    -> Sha1.Hex.t
+    -> on_blob_size:(int -> unit)
+    -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
+    -> on_commit:(Commit.t -> unit)
+    -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
+    -> on_tag:(Tag.t -> unit)
+    -> push_back:(unit -> [ `Ok | `Reader_closed ] Deferred.t)
+    -> unit Deferred.t
+
+  (** [read_blob] is a convenience wrapper on top of [read_object] that raises if the type of
+      object is not Blob. *)
+  val read_blob
+    :  t
+    -> Sha1.Hex.t
+    -> on_size:(int -> unit)
+    -> on_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
+    -> push_back:(unit -> [ `Ok | `Reader_closed ] Deferred.t)
+    -> unit Deferred.t
+
+  (** [read_commit] is a convenience wrapper on top of [read_object] that raises if the type of
+      object is not Commit. *)
+  val read_commit : t -> Sha1.Hex.t -> on_commit:(Commit.t -> unit) -> unit Deferred.t
+
+  (** [read_tree] is a convenience wrapper on top of [read_object] that raises if the type of
+      object is not Tree. *)
+  val read_tree
+    :  t
+    -> Sha1.Hex.t
+    -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
+    -> unit Deferred.t
+
+  (** [read_tag] is a convenience wrapper on top of [read_object] that raises if the type of
+      object is not Tag. *)
+  val read_tag : t -> Sha1.Hex.t -> on_tag:(Tag.t -> unit) -> unit Deferred.t
+
+  (** Looks for an object with the given SHA1 hash and calls [f] with an on-disk file containing
+      the object.
+
+      Raises if the object does not exist.
+
+      The file will not necessarily persist after [f] is called as packed objects are written
+      to a temporary file that is deleted after [f] is called. *)
+  val with_on_disk_file : t -> Sha1.Hex.t -> f:(string -> 'a Deferred.t) -> 'a Deferred.t
+
+  module Object_location = Object_location
+
+  val all_objects_in_store : t -> Object_location.t list Sha1.Hex.Table.t Deferred.t
+end

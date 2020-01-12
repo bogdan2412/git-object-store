@@ -68,39 +68,51 @@ let feed_parser_data =
 ;;
 
 module Base_object_parser : sig
-  type t
+  type _ t
 
-  val create : unit -> t
+  val create : 'Sha1_validation Sha1_validation.t -> 'Sha1_validation t
 
-  val reset_for_blob
-    :  t
+  val reset_for_reading_blob
+    :  'Sha1_validation t
     -> payload_length:int
     -> on_size:(int -> unit)
     -> on_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
+    -> 'Sha1_validation
     -> unit
 
-  val reset_for_commit : t -> payload_length:int -> on_commit:(Commit.t -> unit) -> unit
+  val reset_for_reading_commit
+    :  'Sha1_validation t
+    -> payload_length:int
+    -> on_commit:(Commit.t -> unit)
+    -> 'Sha1_validation
+    -> unit
 
-  val reset_for_tree
-    :  t
+  val reset_for_reading_tree
+    :  'Sha1_validation t
     -> payload_length:int
     -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
+    -> 'Sha1_validation
     -> unit
 
-  val reset_for_tag : t -> payload_length:int -> on_tag:(Tag.t -> unit) -> unit
+  val reset_for_reading_tag
+    :  'Sha1_validation t
+    -> payload_length:int
+    -> on_tag:(Tag.t -> unit)
+    -> 'Sha1_validation
+    -> unit
 
   (** Returns number of bytes consumed from input. *)
-  val process : t -> Bigstring.t -> pos:int -> len:int -> int
+  val process : _ t -> Bigstring.t -> pos:int -> len:int -> int
 
-  (** Returns total uncompressed length. *)
-  val finalise : t -> unit
+  val finalise : _ t -> unit
 end = struct
-  type t =
-    { git_object_parser : Git_object_parser.t
+  type 'Sha1_validation t =
+    { git_object_parser : 'Sha1_validation Git_object_parser.t
     ; zlib_inflate : Zlib.Inflate.t
+    ; mutable expected_sha1 : 'Sha1_validation
     }
 
-  let create () =
+  let create (type a) (sha1_validation : a Sha1_validation.t) : a t =
     let git_object_parser =
       Git_object_parser.create
         ~on_blob_size:(fun (_ : int) -> ())
@@ -110,52 +122,59 @@ end = struct
           (fun (_ : File_mode.t) (_ : Sha1.Raw.Volatile.t) ~name:(_ : string) -> ())
         ~on_tag:(fun (_ : Tag.t) -> ())
         ~on_error:Error.raise
+        sha1_validation
     in
     let zlib_inflate =
       Zlib.Inflate.create_uninitialised ~on_data_chunk:(fun buf ~pos ~len ->
         Git_object_parser.append_data git_object_parser buf ~pos ~len)
     in
-    { git_object_parser; zlib_inflate }
+    match sha1_validation with
+    | Do_not_validate_sha1 -> { git_object_parser; zlib_inflate; expected_sha1 = () }
+    | Validate_sha1 ->
+      { git_object_parser
+      ; zlib_inflate
+      ; expected_sha1 = Sha1.Hex.of_string "0000000000000000000000000000000000000000"
+      }
   ;;
 
-  let reset_for_blob t ~payload_length ~on_size ~on_chunk =
+  let reset_for_reading_blob t ~payload_length ~on_size ~on_chunk expected_sha1 =
     Zlib.Inflate.init_or_reset t.zlib_inflate;
-    Git_object_parser.reset t.git_object_parser;
     Git_object_parser.set_on_blob t.git_object_parser ~on_size ~on_chunk;
-    Git_object_parser.set_state_reading_blob t.git_object_parser ~payload_length
+    Git_object_parser.reset_for_reading_blob t.git_object_parser ~payload_length;
+    t.expected_sha1 <- expected_sha1
   ;;
 
-  let reset_for_commit t ~payload_length ~on_commit =
+  let reset_for_reading_commit t ~payload_length ~on_commit expected_sha1 =
     Zlib.Inflate.init_or_reset t.zlib_inflate;
-    Git_object_parser.reset t.git_object_parser;
     Git_object_parser.set_on_commit t.git_object_parser on_commit;
-    Git_object_parser.set_state_reading_commit t.git_object_parser ~payload_length
+    Git_object_parser.reset_for_reading_commit t.git_object_parser ~payload_length;
+    t.expected_sha1 <- expected_sha1
   ;;
 
-  let reset_for_tree t ~payload_length ~on_tree_line =
+  let reset_for_reading_tree t ~payload_length ~on_tree_line expected_sha1 =
     Zlib.Inflate.init_or_reset t.zlib_inflate;
-    Git_object_parser.reset t.git_object_parser;
     Git_object_parser.set_on_tree_line t.git_object_parser on_tree_line;
-    Git_object_parser.set_state_reading_tree t.git_object_parser ~payload_length
+    Git_object_parser.reset_for_reading_tree t.git_object_parser ~payload_length;
+    t.expected_sha1 <- expected_sha1
   ;;
 
-  let reset_for_tag t ~payload_length ~on_tag =
+  let reset_for_reading_tag t ~payload_length ~on_tag expected_sha1 =
     Zlib.Inflate.init_or_reset t.zlib_inflate;
-    Git_object_parser.reset t.git_object_parser;
     Git_object_parser.set_on_tag t.git_object_parser on_tag;
-    Git_object_parser.set_state_reading_tag t.git_object_parser ~payload_length
+    Git_object_parser.reset_for_reading_tag t.git_object_parser ~payload_length;
+    t.expected_sha1 <- expected_sha1
   ;;
 
   let process t buf ~pos ~len = Zlib.Inflate.process t.zlib_inflate buf ~pos ~len
 
   let finalise t =
     Zlib.Inflate.finalise t.zlib_inflate;
-    Git_object_parser.finalise t.git_object_parser
+    Git_object_parser.finalise t.git_object_parser t.expected_sha1
   ;;
 end
 
 module Delta_object_parser : sig
-  type t
+  type 'Sha1_validation t
 
   (** An instance of [t] contains three buffers: [base], [delta] and [result].
 
@@ -163,49 +182,50 @@ module Delta_object_parser : sig
       [delta] represents the set of delta instructions applied on top of [base].
       [result] will contain the result of applying [delta] to [base].
   *)
-  val create : unit -> t
+  val create : 'Sha1_validation Sha1_validation.t -> 'Sha1_validation t
 
   (** Returns the buffer containing a computed [result]. *)
-  val result_buf : t -> Bigstring.t
+  val result_buf : _ t -> Bigstring.t
 
   (** Returns length of computed [result]. *)
-  val result_len : t -> int
+  val result_len : _ t -> int
 
   (** Reset [result] buffer and prepare to receive zlib compressed data which will be
       decompressed into it. *)
-  val begin_zlib_inflate_into_result : t -> unit
+  val begin_zlib_inflate_into_result : _ t -> unit
 
   (** Feed [result] buffer a chunk of zlib compressed data. *)
-  val feed_result_zlib_inflate : t -> Bigstring.t -> pos:int -> len:int -> int
+  val feed_result_zlib_inflate : _ t -> Bigstring.t -> pos:int -> len:int -> int
 
   (** Finish decompressing into [result] buffer. *)
-  val finalise_result_zlib_inflate : t -> unit
+  val finalise_result_zlib_inflate : _ t -> unit
 
   (** Swap [result] and [delta] buffers. *)
-  val set_result_as_delta : t -> unit
+  val set_result_as_delta : _ t -> unit
 
   (** Swap [result] and [base] buffers. *)
-  val set_result_as_base : t -> unit
+  val set_result_as_base : _ t -> unit
 
   (** Replace the [base] buffer with the provided buffer and length.
       Note that the contents in the buffer is _not_ copied. *)
-  val set_base_buffer_and_length : t -> Bigstring.t -> length:int -> unit
+  val set_base_buffer_and_length : _ t -> Bigstring.t -> length:int -> unit
 
   (** Compute [result] buffer from [base] and [delta] buffers. *)
-  val compute_result : t -> unit
+  val compute_result : _ t -> unit
 
   (** Parse output in [result] as a Git base object. *)
   val parse_result
-    :  t
+    :  'Sha1_validation t
     -> Object_type.t
     -> on_blob_size:(int -> unit)
     -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
     -> on_commit:(Commit.t -> unit)
     -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
     -> on_tag:(Tag.t -> unit)
+    -> 'Sha1_validation
     -> unit
 end = struct
-  type t =
+  type 'Sha1_validation t =
     { mutable base_buf : Bigstring.t
     ; mutable base_len : int
     ; mutable delta_buf : Bigstring.t
@@ -213,7 +233,7 @@ end = struct
     ; mutable result_buf : Bigstring.t
     ; mutable result_len : int
     ; result_zlib_inflate : Zlib.Inflate.t
-    ; git_object_parser : Git_object_parser.t
+    ; git_object_parser : 'Sha1_validation Git_object_parser.t
     }
   [@@deriving fields]
 
@@ -293,7 +313,7 @@ end = struct
         compute_result t ~delta_pos))
   ;;
 
-  let create () =
+  let create sha1_validation =
     let git_object_parser =
       Git_object_parser.create
         ~on_blob_size:(fun (_ : int) -> ())
@@ -303,6 +323,7 @@ end = struct
           (fun (_ : File_mode.t) (_ : Sha1.Raw.Volatile.t) ~name:(_ : string) -> ())
         ~on_tag:(fun (_ : Tag.t) -> ())
         ~on_error:Error.raise
+        sha1_validation
     in
     let rec t =
       lazy
@@ -392,17 +413,17 @@ end = struct
         ~on_commit
         ~on_tree_line
         ~on_tag
+        sha1_validation
     =
-    Git_object_parser.reset t.git_object_parser;
     (match (object_type : Object_type.t) with
      | Commit ->
        Git_object_parser.set_on_commit t.git_object_parser on_commit;
-       Git_object_parser.set_state_reading_commit
+       Git_object_parser.reset_for_reading_commit
          t.git_object_parser
          ~payload_length:t.result_len
      | Tree ->
        Git_object_parser.set_on_tree_line t.git_object_parser on_tree_line;
-       Git_object_parser.set_state_reading_tree
+       Git_object_parser.reset_for_reading_tree
          t.git_object_parser
          ~payload_length:t.result_len
      | Blob ->
@@ -410,12 +431,12 @@ end = struct
          t.git_object_parser
          ~on_size:on_blob_size
          ~on_chunk:on_blob_chunk;
-       Git_object_parser.set_state_reading_blob
+       Git_object_parser.reset_for_reading_blob
          t.git_object_parser
          ~payload_length:t.result_len
      | Tag ->
        Git_object_parser.set_on_tag t.git_object_parser on_tag;
-       Git_object_parser.set_state_reading_tag
+       Git_object_parser.reset_for_reading_tag
          t.git_object_parser
          ~payload_length:t.result_len);
     Git_object_parser.append_data
@@ -423,7 +444,7 @@ end = struct
       t.result_buf
       ~pos:0
       ~len:t.result_len;
-    Git_object_parser.finalise t.git_object_parser
+    Git_object_parser.finalise t.git_object_parser sha1_validation
   ;;
 end
 
@@ -882,7 +903,7 @@ module Index = struct
 
     let index_pack ~pack_file ~pack_file_mmap ~items_in_pack =
       let index_file = String.chop_suffix_exn ~suffix:".pack" pack_file ^ ".idx" in
-      let delta_object_parser = Delta_object_parser.create () in
+      let delta_object_parser = Delta_object_parser.create Do_not_validate_sha1 in
       let sha1_compute = Sha1.Compute.create_uninitialised () in
       let objects = index_objects ~pack_file_mmap ~items_in_pack in
       let objects_in_pack_order = Array.of_list (Hashtbl.data objects) in
@@ -911,18 +932,19 @@ module Index = struct
   end
 end
 
-type t =
+type 'Sha1_validation t =
   { pack_file : string
   ; pack_fd : Fd.t
   ; pack_file_size : int
   ; pack_file_mmap : Bigstring.t
   ; items_in_pack : int
-  ; base_object_parser : Base_object_parser.t
-  ; delta_object_parser : Delta_object_parser.t
+  ; base_object_parser : 'Sha1_validation Base_object_parser.t
+  ; delta_object_parser : 'Sha1_validation Delta_object_parser.t
+  ; sha1_validation : 'Sha1_validation Sha1_validation.t
   ; index : Index.t
   }
 
-let create ~pack_file =
+let create ~pack_file sha1_validation =
   let pack_file =
     if String.is_suffix ~suffix:".pack" pack_file then pack_file else pack_file ^ ".pack"
   in
@@ -956,8 +978,9 @@ let create ~pack_file =
         ; pack_file_size
         ; pack_file_mmap
         ; items_in_pack
-        ; base_object_parser = Base_object_parser.create ()
-        ; delta_object_parser = Delta_object_parser.create ()
+        ; base_object_parser = Base_object_parser.create sha1_validation
+        ; delta_object_parser = Delta_object_parser.create sha1_validation
+        ; sha1_validation
         ; index
         }
     in
@@ -982,9 +1005,10 @@ let validate_index t ~index =
         "Invalid value for index" (index : int) ~items_in_pack:(t.items_in_pack : int)]
 ;;
 
-let sha1 =
-  let result = Sha1.Raw.Volatile.create () in
-  fun t ~index ->
+module Sha1_function = struct
+  let result = Sha1.Raw.Volatile.create ()
+
+  let impl t ~index =
     validate_index t ~index;
     Bigstring.To_bytes.blit
       ~src:t.index.file_mmap
@@ -993,13 +1017,16 @@ let sha1 =
       ~dst_pos:0
       ~len:Sha1.Raw.length;
     result
-;;
+  ;;
+end
 
+let sha1 = Sha1_function.impl
 let items_in_pack t = t.items_in_pack
 
-let pack_file_object_offset =
-  let msb_mask = 1 lsl 31 in
-  fun t ~index ->
+module Pack_file_object_offset_function = struct
+  let msb_mask = 1 lsl 31
+
+  let impl t ~index =
     validate_index t ~index;
     let offset =
       Bigstring.get_uint32_be
@@ -1012,7 +1039,10 @@ let pack_file_object_offset =
       Bigstring.get_uint64_be_exn
         t.index.file_mmap
         ~pos:(Index.Section_pos.uint64_offset t.index.section_pos (offset lxor msb_mask))
-;;
+  ;;
+end
+
+let pack_file_object_offset = Pack_file_object_offset_function.impl
 
 let object_type t ~index =
   let pos = pack_file_object_offset t ~index in
@@ -1140,7 +1170,7 @@ let find_sha1_index' t sha1 =
   find_sha1_index_gen t Bytes.get (Sha1.Raw.Volatile.bytes sha1)
 ;;
 
-let rec read_raw_delta_object =
+module Read_raw_delta_object_function = struct
   let feed_parser_data delta_object_parser ~expected_length buf pos =
     Delta_object_parser.begin_zlib_inflate_into_result delta_object_parser;
     let (_ : int) =
@@ -1157,9 +1187,11 @@ let rec read_raw_delta_object =
       raise_s
         [%message
           "Unexpected object length" (actual_length : int) (expected_length : int)]
-  in
-  let sha1 = Sha1.Raw.Volatile.create () in
-  fun t ~pos ->
+  ;;
+
+  let sha1 = Sha1.Raw.Volatile.create ()
+
+  let rec impl t ~pos =
     let data_start_pos = skip_variable_length_integer t.pack_file_mmap ~pos in
     match object_type' t.pack_file_mmap ~pos with
     | (Commit | Tree | Blob | Tag) as object_type ->
@@ -1194,7 +1226,7 @@ let rec read_raw_delta_object =
           let index = Find_result.Volatile.index_exn (find_sha1_index' t sha1) in
           pack_file_object_offset t ~index, data_start_pos + Sha1.Raw.length
       in
-      let object_type = read_raw_delta_object t ~pos:base_pos in
+      let object_type = impl t ~pos:base_pos in
       Delta_object_parser.set_result_as_base t.delta_object_parser;
       feed_parser_data
         t.delta_object_parser
@@ -1204,17 +1236,51 @@ let rec read_raw_delta_object =
       Delta_object_parser.set_result_as_delta t.delta_object_parser;
       Delta_object_parser.compute_result t.delta_object_parser;
       object_type
-;;
+  ;;
+end
 
-let read_raw_object t ~index ~on_header ~on_payload =
-  let pos = pack_file_object_offset t ~index in
-  let object_type = read_raw_delta_object t ~pos in
-  let len = Delta_object_parser.result_len t.delta_object_parser in
-  on_header object_type ~size:len;
-  on_payload (Delta_object_parser.result_buf t.delta_object_parser) ~pos:0 ~len
-;;
+let read_raw_delta_object = Read_raw_delta_object_function.impl
 
-let read_object =
+module Read_raw_object_function = struct
+  let sha1_context = Sha1.Compute.create_uninitialised ()
+  let buf = Bigstring.create 32
+
+  let impl (type a) (t : a t) ~index ~on_header ~on_payload =
+    let pos = pack_file_object_offset t ~index in
+    let object_type = read_raw_delta_object t ~pos in
+    let len = Delta_object_parser.result_len t.delta_object_parser in
+    on_header object_type ~size:len;
+    on_payload (Delta_object_parser.result_buf t.delta_object_parser) ~pos:0 ~len;
+    match t.sha1_validation with
+    | Do_not_validate_sha1 -> ()
+    | Validate_sha1 ->
+      let sha1_context = Sha1.Compute.init_or_reset sha1_context in
+      let header_len =
+        Git_object_header_writer.write_from_left buf ~pos:0 object_type ~object_length:len
+      in
+      Sha1.Compute.process sha1_context buf ~pos:0 ~len:header_len;
+      Sha1.Compute.process
+        sha1_context
+        (Delta_object_parser.result_buf t.delta_object_parser)
+        ~pos:0
+        ~len;
+      let sha1_context = Sha1.Compute.finalise sha1_context in
+      let actual_sha1 =
+        Sha1.Hex.Volatile.non_volatile (Sha1.Compute.get_hex sha1_context)
+      in
+      let expected_sha1 = Sha1.Raw.Volatile.to_hex (sha1 t ~index) in
+      if [%compare.equal: Sha1.Hex.t] actual_sha1 expected_sha1
+      then ()
+      else
+        raise_s
+          [%message
+            "Unexpected_sha1" (actual_sha1 : Sha1.Hex.t) (expected_sha1 : Sha1.Hex.t)]
+  ;;
+end
+
+let read_raw_object = Read_raw_object_function.impl
+
+module Read_object_function = struct
   let feed_parser_data t pos =
     let (_ : int) =
       feed_parser_data
@@ -1225,27 +1291,58 @@ let read_object =
         ~pos
     in
     ()
-  in
-  fun t ~index ~on_blob_size ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag ->
+  ;;
+
+  let impl
+        (type a)
+        (t : a t)
+        ~index
+        ~on_blob_size
+        ~on_blob_chunk
+        ~on_commit
+        ~on_tree_line
+        ~on_tag
+    =
     let pos = pack_file_object_offset t ~index in
     let payload_length = object_length' t.pack_file_mmap ~pos in
     let data_start_pos = skip_variable_length_integer t.pack_file_mmap ~pos in
     match object_type' t.pack_file_mmap ~pos with
     | Commit ->
-      Base_object_parser.reset_for_commit t.base_object_parser ~payload_length ~on_commit;
+      Base_object_parser.reset_for_reading_commit
+        t.base_object_parser
+        ~payload_length
+        ~on_commit
+        (match t.sha1_validation with
+         | Do_not_validate_sha1 -> ()
+         | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index));
       feed_parser_data t data_start_pos
     | Tree ->
-      Base_object_parser.reset_for_tree t.base_object_parser ~payload_length ~on_tree_line;
+      Base_object_parser.reset_for_reading_tree
+        t.base_object_parser
+        ~payload_length
+        ~on_tree_line
+        (match t.sha1_validation with
+         | Do_not_validate_sha1 -> ()
+         | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index));
       feed_parser_data t data_start_pos
     | Blob ->
-      Base_object_parser.reset_for_blob
+      Base_object_parser.reset_for_reading_blob
         t.base_object_parser
         ~payload_length
         ~on_size:on_blob_size
-        ~on_chunk:on_blob_chunk;
+        ~on_chunk:on_blob_chunk
+        (match t.sha1_validation with
+         | Do_not_validate_sha1 -> ()
+         | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index));
       feed_parser_data t data_start_pos
     | Tag ->
-      Base_object_parser.reset_for_tag t.base_object_parser ~payload_length ~on_tag;
+      Base_object_parser.reset_for_reading_tag
+        t.base_object_parser
+        ~payload_length
+        ~on_tag
+        (match t.sha1_validation with
+         | Do_not_validate_sha1 -> ()
+         | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index));
       feed_parser_data t data_start_pos
     | Ofs_delta | Ref_delta ->
       let object_type = read_raw_delta_object t ~pos in
@@ -1257,11 +1354,17 @@ let read_object =
         ~on_commit
         ~on_tree_line
         ~on_tag
-;;
+        (match t.sha1_validation with
+         | Do_not_validate_sha1 -> ()
+         | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index))
+  ;;
+end
+
+let read_object = Read_object_function.impl
 
 module For_testing = struct
   let print_out_pack_file pack_file =
-    let%map t = create ~pack_file >>| ok_exn in
+    let%map t = create ~pack_file Validate_sha1 >>| ok_exn in
     printf "items in pack: %d\n" t.items_in_pack;
     printf "idx | %40s | pack file offset | object length | object type\n" "sha1";
     for index = 0 to t.items_in_pack - 1 do
@@ -1275,6 +1378,12 @@ module For_testing = struct
     done;
     for index = 0 to t.items_in_pack - 1 do
       printf !"\n%{Sha1.Hex}\n" (Sha1.Raw.Volatile.to_hex (sha1 t ~index));
+      read_raw_object
+        t
+        ~index
+        ~on_header:(fun object_type ~size ->
+          printf !"Header data: %{Object_type} size %d\n" object_type size)
+        ~on_payload:(fun (_ : Bigstring.t) ~pos:(_ : int) ~len:(_ : int) -> ());
       read_object
         t
         ~index
@@ -1320,14 +1429,17 @@ let%expect_test "read pack" =
            4 | d2ef8c710416f38bdf6e8487630486830edc6c7f |              150 |           202 | Commit
 
          1c59427adc4b205a270d8f810310394962e79a8b
+         Header data: Blob size 12
          Blob size: 12
          Blob chunk: "second file\n"
 
          303ff981c488b812b6215f7db7920dedb3b59d9a
+         Header data: Blob size 11
          Blob size: 11
          Blob chunk: "first file\n"
 
          ac5f368017e73cac599c7dfd77bd36da2b816eaf
+         Header data: Tag size 150
          ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
           (tag vtest)
           (tagger
@@ -1336,12 +1448,14 @@ let%expect_test "read pack" =
           (description "test tag\n"))
 
          b39daecaf9bc405deea72ff4dcbd5bb16613eb1f
+         Header data: Tree size 115
          Tree line: Non_executable_file 303ff981c488b812b6215f7db7920dedb3b59d9a a
          Tree line: Non_executable_file 1c59427adc4b205a270d8f810310394962e79a8b b
          Tree line: Directory d0b2476d5a6fc7bced4f6ef841b7e7022fad0493 c
          Tree line: Link 68bdebaba7f41affa1aabce553c79818984181a9 d
 
          d2ef8c710416f38bdf6e8487630486830edc6c7f
+         Header data: Commit size 202
          ((tree b39daecaf9bc405deea72ff4dcbd5bb16613eb1f) (parents ())
           (author
            ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)

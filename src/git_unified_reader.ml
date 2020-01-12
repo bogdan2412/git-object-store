@@ -18,11 +18,12 @@
 open Core
 open Async
 
-type t =
+type 'Sha1_validation t =
   { object_directory : string
-  ; packs : (string * Git_pack_reader.t) list
+  ; packs : (string * 'Sha1_validation Git_pack_reader.t) list
   ; sha1_buf : Sha1.Raw.Volatile.t
-  ; read_throttle : Git_object_reader.t Throttle.t
+  ; read_throttle : 'Sha1_validation Git_object_reader.t Throttle.t
+  ; sha1_validation : 'Sha1_validation Sha1_validation.t
   }
 
 let unexpected_blob_size (_ : int) = failwith "Unexpected blob object"
@@ -39,7 +40,7 @@ let unexpected_tree_line (_ : File_mode.t) (_ : Sha1.Raw.Volatile.t) ~name:(_ : 
 
 let unexpected_tag (_ : Tag.t) = failwith "Unexpected tag object"
 
-let create ~object_directory ~max_concurrent_reads =
+let create ~object_directory ~max_concurrent_reads sha1_validation =
   let open Deferred.Or_error.Let_syntax in
   let%bind packs =
     Monitor.try_with_or_error ~extract_exn:true (fun () ->
@@ -52,7 +53,7 @@ let create ~object_directory ~max_concurrent_reads =
     |> List.filter ~f:(fun pack_file -> String.is_suffix ~suffix:".pack" pack_file)
     |> Deferred.Or_error.List.map ~how:`Sequential ~f:(fun pack_file ->
       let pack_file = object_directory ^/ "pack" ^/ pack_file in
-      let%map pack_reader = Git_pack_reader.create ~pack_file in
+      let%map pack_reader = Git_pack_reader.create ~pack_file sha1_validation in
       pack_file, pack_reader)
   in
   let read_throttle =
@@ -65,9 +66,15 @@ let create ~object_directory ~max_concurrent_reads =
            ~on_commit:unexpected_commit
            ~on_tree_line:unexpected_tree_line
            ~on_tag:unexpected_tag
-           ~on_error:Error.raise))
+           ~on_error:Error.raise
+           sha1_validation))
   in
-  { object_directory; packs; sha1_buf = Sha1.Raw.Volatile.create (); read_throttle }
+  { object_directory
+  ; packs
+  ; sha1_buf = Sha1.Raw.Volatile.create ()
+  ; read_throttle
+  ; sha1_validation
+  }
 ;;
 
 let object_directory t = t.object_directory
@@ -79,53 +86,92 @@ let unpacked_disk_path t sha1 =
     (String.sub sha1_string ~pos:2 ~len:(Sha1.Hex.length - 2))
 ;;
 
+let read_object_from_unpacked_file
+      (type a)
+      (t : a t)
+      sha1
+      ~on_blob_size
+      ~on_blob_chunk
+      ~on_commit
+      ~on_tree_line
+      ~on_tag
+      ~push_back
+  =
+  Throttle.enqueue t.read_throttle (fun git_object_reader ->
+    Git_object_reader.set_on_blob
+      git_object_reader
+      ~on_size:on_blob_size
+      ~on_chunk:on_blob_chunk;
+    Git_object_reader.set_on_commit git_object_reader on_commit;
+    Git_object_reader.set_on_tree_line git_object_reader on_tree_line;
+    Git_object_reader.set_on_tag git_object_reader on_tag;
+    let path = unpacked_disk_path t sha1 in
+    Git_object_reader.read_file'
+      git_object_reader
+      ~file:path
+      ~push_back
+      (match t.sha1_validation with
+       | Do_not_validate_sha1 -> ()
+       | Validate_sha1 -> sha1))
+;;
+
 let read_object =
   let rec loop_packs
-            t
-            sha1
-            ~on_blob_size
-            ~on_blob_chunk
-            ~on_commit
-            ~on_tree_line
-            ~on_tag
-            ~push_back
-            packs
+    : type a.
+      a t
+      -> Sha1.Hex.t
+      -> on_blob_size:(int -> unit)
+      -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
+      -> on_commit:(Commit.t -> unit)
+      -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
+      -> on_tag:(Tag.t -> unit)
+      -> push_back:(unit -> [ `Ok | `Reader_closed ] Deferred.t)
+      -> (string * a Git_pack_reader.t) list
+      -> unit Deferred.t
     =
-    match packs with
-    | [] ->
-      Throttle.enqueue t.read_throttle (fun git_object_reader ->
-        Git_object_reader.set_on_blob
-          git_object_reader
-          ~on_size:on_blob_size
-          ~on_chunk:on_blob_chunk;
-        Git_object_reader.set_on_commit git_object_reader on_commit;
-        Git_object_reader.set_on_tree_line git_object_reader on_tree_line;
-        Git_object_reader.set_on_tag git_object_reader on_tag;
-        let path = unpacked_disk_path t sha1 in
-        Git_object_reader.read_file' git_object_reader ~file:path ~push_back)
-    | (_, pack) :: packs ->
-      (match Git_pack_reader.find_sha1_index' pack t.sha1_buf with
-       | None ->
-         loop_packs
-           t
-           sha1
-           ~on_blob_size
-           ~on_blob_chunk
-           ~on_commit
-           ~on_tree_line
-           ~on_tag
-           ~push_back
-           packs
-       | Some { index } ->
-         Git_pack_reader.read_object
-           pack
-           ~index
-           ~on_blob_size
-           ~on_blob_chunk
-           ~on_commit
-           ~on_tree_line
-           ~on_tag;
-         Deferred.unit)
+    fun t
+      sha1
+      ~on_blob_size
+      ~on_blob_chunk
+      ~on_commit
+      ~on_tree_line
+      ~on_tag
+      ~push_back
+      packs ->
+      match packs with
+      | [] ->
+        read_object_from_unpacked_file
+          t
+          sha1
+          ~on_blob_size
+          ~on_blob_chunk
+          ~on_commit
+          ~on_tree_line
+          ~on_tag
+          ~push_back
+      | (_, pack) :: packs ->
+        (match Git_pack_reader.find_sha1_index' pack t.sha1_buf with
+         | None ->
+           loop_packs
+             t
+             sha1
+             ~on_blob_size
+             ~on_blob_chunk
+             ~on_commit
+             ~on_tree_line
+             ~on_tag
+             ~push_back
+             packs
+         | Some { index } ->
+           Git_pack_reader.read_object
+             pack
+             ~index
+             ~on_blob_size
+             ~on_blob_chunk
+             ~on_commit
+             ~on_tree_line
+             ~on_tag;
+           Deferred.unit)
   in
   fun t sha1 ~on_blob_size ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag ~push_back ->
     Sha1.Raw.Volatile.of_hex sha1 t.sha1_buf;
@@ -287,3 +333,58 @@ let all_objects_in_store t =
     done);
   return result
 ;;
+
+module Packed = struct
+  type 'a non_packed = 'a t
+  type t = T : _ non_packed -> t
+
+  let create ~object_directory ~max_concurrent_reads sha1_validation =
+    create ~object_directory ~max_concurrent_reads sha1_validation
+    >>|? fun unified_store -> T unified_store
+  ;;
+
+  let object_directory (T unified_store) = object_directory unified_store
+
+  let read_object
+        (T unified_store)
+        sha1
+        ~on_blob_size
+        ~on_blob_chunk
+        ~on_commit
+        ~on_tree_line
+        ~on_tag
+        ~push_back
+    =
+    read_object
+      unified_store
+      sha1
+      ~on_blob_size
+      ~on_blob_chunk
+      ~on_commit
+      ~on_tree_line
+      ~on_tag
+      ~push_back
+  ;;
+
+  let read_blob (T unified_store) sha1 ~on_size ~on_chunk ~push_back =
+    read_blob unified_store sha1 ~on_size ~on_chunk ~push_back
+  ;;
+
+  let read_commit (T unified_store) sha1 ~on_commit =
+    read_commit unified_store sha1 ~on_commit
+  ;;
+
+  let read_tree (T unified_store) sha1 ~on_tree_line =
+    read_tree unified_store sha1 ~on_tree_line
+  ;;
+
+  let read_tag (T unified_store) sha1 ~on_tag = read_tag unified_store sha1 ~on_tag
+
+  let with_on_disk_file (T unified_store) sha1 ~f =
+    with_on_disk_file unified_store sha1 ~f
+  ;;
+
+  module Object_location = Object_location
+
+  let all_objects_in_store (T unified_store) = all_objects_in_store unified_store
+end

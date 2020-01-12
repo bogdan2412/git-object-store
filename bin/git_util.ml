@@ -20,28 +20,40 @@ open Async
 open Git_object_store
 
 let read_git_object_file file =
+  let sha1 =
+    let part2, part3 = Filename.split (Filename.realpath file) in
+    let _part1, part2 = Filename.split part2 in
+    Option.try_with (fun () -> Sha1.Hex.of_string (part2 ^ part3))
+  in
+  let create_git_object_reader sha1_validation =
+    Git_object_reader.create
+      ~on_blob_size:(fun (_ : int) -> ())
+      ~on_blob_chunk:(fun buf ~pos ~len ->
+        Writer.write_bigstring (force Writer.stdout) ~pos ~len buf)
+      ~on_commit:(fun commit -> printf !"%{sexp: Commit.t}\n" commit)
+      ~on_tree_line:(fun mode sha1 ~name ->
+        printf
+          !"%19s    %{Sha1.Hex}    %s\n"
+          (Sexp.to_string_hum ([%sexp_of: File_mode.t] mode))
+          (Sha1.Raw.Volatile.to_hex sha1)
+          name)
+      ~on_tag:(fun tag -> printf !"%{sexp: Tag.t}\n" tag)
+      ~on_error:(fun error -> Error.raise error)
+      sha1_validation
+  in
   Monitor.try_with_or_error ~extract_exn:true (fun () ->
-    let git_object_reader =
-      Git_object_reader.create
-        ~on_blob_size:(fun (_ : int) -> ())
-        ~on_blob_chunk:(fun buf ~pos ~len ->
-          Writer.write_bigstring (force Writer.stdout) ~pos ~len buf)
-        ~on_commit:(fun commit -> printf !"%{sexp: Commit.t}\n" commit)
-        ~on_tree_line:(fun mode sha1 ~name ->
-          printf
-            !"%19s    %{Sha1.Hex}    %s\n"
-            (Sexp.to_string_hum ([%sexp_of: File_mode.t] mode))
-            (Sha1.Raw.Volatile.to_hex sha1)
-            name)
-        ~on_tag:(fun tag -> printf !"%{sexp: Tag.t}\n" tag)
-        ~on_error:(fun error -> Error.raise error)
-    in
-    Git_object_reader.read_file git_object_reader ~file)
+    match sha1 with
+    | None ->
+      let git_object_reader = create_git_object_reader Do_not_validate_sha1 in
+      Git_object_reader.read_file git_object_reader ~file ()
+    | Some sha1 ->
+      let git_object_reader = create_git_object_reader Validate_sha1 in
+      Git_object_reader.read_file git_object_reader ~file sha1)
 ;;
 
 let read_git_pack_file pack_file =
   let open Deferred.Or_error.Let_syntax in
-  let%map t = Git_pack_reader.create ~pack_file in
+  let%map t = Git_pack_reader.create ~pack_file Validate_sha1 in
   let items_in_pack = Git_pack_reader.items_in_pack t in
   Core.printf "items in pack: %d\n" items_in_pack;
   Core.printf "    idx | %40s\n" "sha1";
@@ -84,7 +96,7 @@ let index_git_pack_file pack_file = Git_pack_reader.index_pack ~pack_file
 let read_sha1_from_store ~object_directory sha1 =
   let open Deferred.Or_error.Let_syntax in
   let%bind git_unified_reader =
-    Git_unified_reader.create ~object_directory ~max_concurrent_reads:1
+    Git_unified_reader.create ~object_directory ~max_concurrent_reads:1 Validate_sha1
   in
   Monitor.try_with_or_error ~extract_exn:true (fun () ->
     let open Deferred.Let_syntax in
@@ -209,8 +221,8 @@ let read_sha1_from_store_command =
     ~summary:
       "print git object identified by sha1 from either a raw object file or a pack file"
     [%map_open.Command
-      let sha1 = anon ("SHA1" %: sexp_conv [%of_sexp: Sha1.Hex.t])
-      and object_directory = anon ("OBJECT-DIRECTORY" %: Filename.arg_type) in
+      let object_directory = anon ("OBJECT-DIRECTORY" %: Filename.arg_type)
+      and sha1 = anon ("SHA1" %: sexp_conv [%of_sexp: Sha1.Hex.t]) in
       fun () -> read_sha1_from_store ~object_directory sha1]
 ;;
 
@@ -220,8 +232,8 @@ let write_commit_from_file_command =
       "create a commit given a sexp representation in the same format as output by the \
        read commands"
     [%map_open.Command
-      let file = anon ("SEXP-FILE" %: Filename.arg_type)
-      and object_directory = anon ("OBJECT-DIRECTORY" %: Filename.arg_type) in
+      let object_directory = anon ("OBJECT-DIRECTORY" %: Filename.arg_type)
+      and file = anon ("SEXP-FILE" %: Filename.arg_type) in
       fun () -> write_commit_from_file ~object_directory file]
 ;;
 
@@ -231,8 +243,8 @@ let write_tree_from_file_command =
       "create a tree given a line-based representation in the same format as output by \
        the read commands"
     [%map_open.Command
-      let file = anon ("FILE" %: Filename.arg_type)
-      and object_directory = anon ("OBJECT-DIRECTORY" %: Filename.arg_type) in
+      let object_directory = anon ("OBJECT-DIRECTORY" %: Filename.arg_type)
+      and file = anon ("FILE" %: Filename.arg_type) in
       fun () -> write_tree_from_file ~object_directory file]
 ;;
 
@@ -240,8 +252,8 @@ let write_blob_from_file_command =
   Command.async_or_error
     ~summary:"create a blob given a file"
     [%map_open.Command
-      let file = anon ("FILE" %: Filename.arg_type)
-      and object_directory = anon ("OBJECT-DIRECTORY" %: Filename.arg_type) in
+      let object_directory = anon ("OBJECT-DIRECTORY" %: Filename.arg_type)
+      and file = anon ("FILE" %: Filename.arg_type) in
       fun () -> write_blob_from_file ~object_directory file]
 ;;
 
