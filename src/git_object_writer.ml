@@ -112,27 +112,7 @@ end = struct
   ;;
 end
 
-let rec int_as_string_length ~acc n =
-  if n <= 9 then acc + 1 else int_as_string_length ~acc:(acc + 1) (n / 10)
-;;
-
-let rec write_int_as_string buf ~pos ~value =
-  if value <= 9
-  then Bigstring.set buf pos (Char.unsafe_of_int (Char.to_int '0' + value))
-  else (
-    Bigstring.set buf pos (Char.unsafe_of_int (Char.to_int '0' + (value mod 10)));
-    write_int_as_string buf ~pos:(pos - 1) ~value:(value / 10))
-;;
-
 module With_header = struct
-  let object_type_string object_type =
-    match (object_type : Object_type.t) with
-    | Commit -> "commit "
-    | Tree -> "tree "
-    | Blob -> "blob "
-    | Tag -> "tag "
-  ;;
-
   module Unknown_size : sig
     type t
 
@@ -150,7 +130,7 @@ module With_header = struct
   end = struct
     type t =
       { raw : Raw.t
-      ; mutable object_type : string
+      ; mutable object_type : Object_type.t
       ; mutable buf : Bigstring.t
       ; mutable start : int
       ; mutable pos : int
@@ -158,7 +138,7 @@ module With_header = struct
 
     let create_uninitialised ~object_directory =
       { raw = Raw.create_uninitialised ~object_directory
-      ; object_type = ""
+      ; object_type = Blob
       ; buf = Bigstring.create (if Core.am_running_inline_test then 1 else 1 lsl 15)
       ; start = 0
       ; pos = 0
@@ -186,7 +166,7 @@ module With_header = struct
     let init_or_reset t object_type =
       let%map () = Raw.init_or_reset t.raw in
       make_room_for_pos t ~pos:32;
-      t.object_type <- object_type_string object_type;
+      t.object_type <- object_type;
       t.start <- 32;
       t.pos <- 32
     ;;
@@ -196,19 +176,14 @@ module With_header = struct
     let finalise t =
       let data_len = t.pos - t.start in
       assert (data_len >= 0);
-      let len_str_len = int_as_string_length ~acc:0 data_len in
-      let object_type_len = String.length t.object_type in
-      Bigstring.set t.buf (t.start - 1) '\000';
-      write_int_as_string t.buf ~pos:(t.start - 2) ~value:data_len;
-      let len = object_type_len + len_str_len + 1 + data_len in
-      let pos = t.pos - len in
-      Bigstring.From_string.blit
-        ~src:t.object_type
-        ~src_pos:0
-        ~len:object_type_len
-        ~dst:t.buf
-        ~dst_pos:pos;
-      Raw.append_data t.raw t.buf ~pos ~len;
+      let header_len =
+        Git_object_header_writer.write_from_right
+          t.buf
+          ~pos:(t.start - 1)
+          t.object_type
+          ~object_length:data_len
+      in
+      Raw.append_data t.raw t.buf ~pos:(t.start - header_len) ~len:(header_len + data_len);
       Raw.finalise t.raw
     ;;
 
@@ -240,21 +215,17 @@ module With_header = struct
     ;;
 
     let init_or_reset t object_type ~length =
-      let object_type_str = object_type_string object_type in
-      let object_type_len = String.length object_type_str in
-      Bigstring.From_string.blit
-        ~src:object_type_str
-        ~src_pos:0
-        ~dst:t.buf
-        ~dst_pos:0
-        ~len:object_type_len;
-      let len_str_len = int_as_string_length ~acc:0 length in
-      write_int_as_string t.buf ~pos:(object_type_len + len_str_len - 1) ~value:length;
-      Bigstring.set t.buf (object_type_len + len_str_len) '\000';
+      let header_len =
+        Git_object_header_writer.write_from_left
+          t.buf
+          ~pos:0
+          object_type
+          ~object_length:length
+      in
       t.expected <- length;
       t.written <- 0;
       let%map () = Raw.init_or_reset t.raw in
-      Raw.append_data t.raw t.buf ~pos:0 ~len:(object_type_len + len_str_len + 1)
+      Raw.append_data t.raw t.buf ~pos:0 ~len:header_len
     ;;
 
     let append_data t buf ~pos ~len =

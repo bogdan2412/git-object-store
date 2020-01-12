@@ -725,39 +725,6 @@ module Index = struct
         objects
     ;;
 
-    let rec int_as_string_length ~acc n =
-      if n <= 9 then acc + 1 else int_as_string_length ~acc:(acc + 1) (n / 10)
-    ;;
-
-    let rec write_int_as_string buf ~pos ~value =
-      if value <= 9
-      then Bigstring.set buf pos (Char.unsafe_of_int (Char.to_int '0' + value))
-      else (
-        Bigstring.set buf pos (Char.unsafe_of_int (Char.to_int '0' + (value mod 10)));
-        write_int_as_string buf ~pos:(pos - 1) ~value:(value / 10))
-    ;;
-
-    let write_object_type_and_length_header buf object_type object_length =
-      let object_type_string, object_type_length =
-        match (object_type : Object_type.t) with
-        | Commit -> "commit ", 7
-        | Tree -> "tree ", 5
-        | Blob -> "blob ", 5
-        | Tag -> "tag ", 4
-      in
-      Bigstring.From_string.blit
-        ~src:object_type_string
-        ~src_pos:0
-        ~dst:buf
-        ~dst_pos:0
-        ~len:object_type_length;
-      let object_length_length = int_as_string_length ~acc:0 object_length in
-      let pos = object_type_length + object_length_length - 1 in
-      write_int_as_string buf ~pos ~value:object_length;
-      Bigstring.set buf (pos + 1) '\000';
-      pos + 2
-    ;;
-
     let rec dfs =
       let object_type_buf = Bigstring.create 32 in
       fun delta_object_parser sha1_compute_uninit (object_ : Object.t) buf ->
@@ -791,10 +758,11 @@ module Index = struct
            Delta_object_parser.compute_result delta_object_parser);
         let sha1_compute = Sha1.Compute.init_or_reset sha1_compute_uninit in
         let header_len =
-          write_object_type_and_length_header
+          Git_object_header_writer.write_from_left
             object_type_buf
+            ~pos:0
             object_.object_type
-            (Delta_object_parser.result_len delta_object_parser)
+            ~object_length:(Delta_object_parser.result_len delta_object_parser)
         in
         Sha1.Compute.process sha1_compute object_type_buf ~pos:0 ~len:header_len;
         Sha1.Compute.process
