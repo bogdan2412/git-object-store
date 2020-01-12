@@ -1,6 +1,6 @@
 open Core
 
-module Raw = struct
+module Raw_kernel = struct
   module State : sig
     module View : sig
       type t = private
@@ -98,7 +98,7 @@ module Raw = struct
       }]
   ;;
 
-  let create' ~initial_buffer_size ~on_header ~on_payload_chunk ~on_error =
+  let create ~initial_buffer_size ~on_header ~on_payload_chunk ~on_error =
     { buf = Bigstring.create initial_buffer_size
     ; pos = 0
     ; len = 0
@@ -109,8 +109,6 @@ module Raw = struct
     ; on_error
     }
   ;;
-
-  let create = create' ~initial_buffer_size:(1 lsl 16)
 
   let reset t =
     Fields.Direct.iter
@@ -260,6 +258,136 @@ module Raw = struct
   ;;
 end
 
+module Raw = struct
+  type _ t =
+    | Do_not_validate_sha1 : { raw_kernel : Raw_kernel.t } -> unit t
+    | Validate_sha1 :
+        { raw_kernel : Raw_kernel.t
+        ; sha1_context : [ `Initialised ] Sha1.Compute.t
+        }
+        -> Sha1.Hex.t t
+
+  let raw_kernel (type a) : a t -> Raw_kernel.t = function
+    | Do_not_validate_sha1 { raw_kernel } -> raw_kernel
+    | Validate_sha1 { raw_kernel; sha1_context = _ } -> raw_kernel
+  ;;
+
+  let sexp_of_t _ t = [%sexp_of: Raw_kernel.t] (raw_kernel t)
+
+  let create'
+        ~initial_buffer_size
+        ~on_header
+        ~on_payload_chunk
+        ~on_error
+        (type a)
+        (sha1_validation : a Sha1_validation.t)
+    : a t
+    =
+    let raw_kernel =
+      Raw_kernel.create ~initial_buffer_size ~on_header ~on_payload_chunk ~on_error
+    in
+    match sha1_validation with
+    | Do_not_validate_sha1 -> Do_not_validate_sha1 { raw_kernel }
+    | Validate_sha1 ->
+      Validate_sha1
+        { raw_kernel
+        ; sha1_context = Sha1.Compute.init_or_reset (Sha1.Compute.create_uninitialised ())
+        }
+  ;;
+
+  let create ~on_header ~on_payload_chunk ~on_error sha1_validation =
+    create'
+      ~initial_buffer_size:(1 lsl 16)
+      ~on_header
+      ~on_payload_chunk
+      ~on_error
+      sha1_validation
+  ;;
+
+  let append_data (type a) (t : a t) buf ~pos ~len =
+    match t with
+    | Do_not_validate_sha1 { raw_kernel } ->
+      Raw_kernel.append_data raw_kernel buf ~pos ~len
+    | Validate_sha1 { raw_kernel; sha1_context } ->
+      Raw_kernel.append_data raw_kernel buf ~pos ~len;
+      Sha1.Compute.process sha1_context buf ~pos ~len
+  ;;
+
+  let finalise (type a) (t : a t) (expected_sha1 : a) =
+    match t with
+    | Do_not_validate_sha1 { raw_kernel } -> Raw_kernel.finalise raw_kernel
+    | Validate_sha1 { raw_kernel; sha1_context } ->
+      let sha1_context = Sha1.Compute.finalise sha1_context in
+      let actual_sha1 =
+        Sha1.Hex.Volatile.non_volatile (Sha1.Compute.get_hex sha1_context)
+      in
+      if [%compare.equal: Sha1.Hex.t] actual_sha1 expected_sha1
+      then Raw_kernel.finalise raw_kernel
+      else
+        Raw_kernel.error
+          raw_kernel
+          (Error.create_s
+             [%message
+               "Unexpected_sha1" (actual_sha1 : Sha1.Hex.t) (expected_sha1 : Sha1.Hex.t)])
+  ;;
+
+  let error t error = Raw_kernel.error (raw_kernel t) error
+
+  let reset (type a) (t : a t) =
+    match t with
+    | Do_not_validate_sha1 { raw_kernel } -> Raw_kernel.reset raw_kernel
+    | Validate_sha1 { raw_kernel; sha1_context } ->
+      let (_ : [ `Initialised ] Sha1.Compute.t) =
+        Sha1.Compute.init_or_reset sha1_context
+      in
+      Raw_kernel.reset raw_kernel
+  ;;
+
+  module Feed_sha1_context_header_data_function = struct
+    let buf = Bigstring.create 32
+
+    let impl (type a) (t : a t) object_type payload_length =
+      match t with
+      | Do_not_validate_sha1 { raw_kernel = _ } -> ()
+      | Validate_sha1 { raw_kernel = _; sha1_context } ->
+        let header_len =
+          Git_object_header_writer.write_from_left
+            buf
+            ~pos:0
+            object_type
+            ~object_length:payload_length
+        in
+        Sha1.Compute.process sha1_context buf ~pos:0 ~len:header_len
+    ;;
+  end
+
+  let feed_sha1_context_header_data = Feed_sha1_context_header_data_function.impl
+
+  let reset_for_reading_blob t ~payload_length =
+    reset t;
+    Raw_kernel.set_state_reading_blob (raw_kernel t) ~payload_length;
+    feed_sha1_context_header_data t Blob payload_length
+  ;;
+
+  let reset_for_reading_tree t ~payload_length =
+    reset t;
+    Raw_kernel.set_state_reading_tree (raw_kernel t) ~payload_length;
+    feed_sha1_context_header_data t Tree payload_length
+  ;;
+
+  let reset_for_reading_commit t ~payload_length =
+    reset t;
+    Raw_kernel.set_state_reading_commit (raw_kernel t) ~payload_length;
+    feed_sha1_context_header_data t Commit payload_length
+  ;;
+
+  let reset_for_reading_tag t ~payload_length =
+    reset t;
+    Raw_kernel.set_state_reading_tag (raw_kernel t) ~payload_length;
+    feed_sha1_context_header_data t Tag payload_length
+  ;;
+end
+
 module State : sig
   module View : sig
     type t = private
@@ -325,8 +453,8 @@ end = struct
   let set_reading_tag t = t.value <- Reading_tag
 end
 
-type t =
-  { raw : Raw.t
+type 'Sha1_validation t =
+  { raw : 'Sha1_validation Raw.t
   ; state : State.t
   ; mutable on_blob_size : int -> unit
   ; mutable on_blob_chunk : Bigstring.t -> pos:int -> len:int -> unit
@@ -387,6 +515,7 @@ let on_payload_chunk t buf ~pos ~len ~final =
 ;;
 
 let sexp_of_t
+      _
       { raw
       ; state
       ; on_blob_size = _
@@ -397,7 +526,7 @@ let sexp_of_t
       ; on_error = _
       }
   =
-  [%sexp { raw : Raw.t; state : State.t }]
+  [%sexp { raw : _ Raw.t; state : State.t }]
 ;;
 
 let create
@@ -408,6 +537,7 @@ let create
       ~on_tree_line
       ~on_tag
       ~on_error
+      sha1_validation
   =
   let rec state =
     lazy
@@ -424,7 +554,8 @@ let create
          ~on_header:(fun object_type ~size -> on_header (force t) object_type ~size)
          ~on_payload_chunk:(fun buf ~pos ~len ~final ->
            on_payload_chunk (force t) buf ~pos ~len ~final)
-         ~on_error)
+         ~on_error
+         sha1_validation)
   and t =
     lazy
       { raw = force raw
@@ -461,24 +592,24 @@ let reset t =
     ~on_error:(fun _ _ _ -> ())
 ;;
 
-let set_state_reading_blob t ~payload_length =
-  Raw.set_state_reading_blob t.raw ~payload_length
+let reset_for_reading_blob t ~payload_length =
+  Raw.reset_for_reading_blob t.raw ~payload_length
 ;;
 
-let set_state_reading_tree t ~payload_length =
-  Raw.set_state_reading_tree t.raw ~payload_length
+let reset_for_reading_tree t ~payload_length =
+  Raw.reset_for_reading_tree t.raw ~payload_length
 ;;
 
-let set_state_reading_commit t ~payload_length =
-  Raw.set_state_reading_commit t.raw ~payload_length
+let reset_for_reading_commit t ~payload_length =
+  Raw.reset_for_reading_commit t.raw ~payload_length
 ;;
 
-let set_state_reading_tag t ~payload_length =
-  Raw.set_state_reading_tag t.raw ~payload_length
+let reset_for_reading_tag t ~payload_length =
+  Raw.reset_for_reading_tag t.raw ~payload_length
 ;;
 
 let%expect_test "reading header" =
-  let test string =
+  let test ?(after_finalise = false) string =
     let t =
       create
         ~initial_buffer_size:1
@@ -488,9 +619,11 @@ let%expect_test "reading header" =
         ~on_tree_line:(fun _ _ ~name:_ -> ())
         ~on_tag:(fun _ -> ())
         ~on_error:(fun _ -> ())
+        Do_not_validate_sha1
     in
     append_data t (Bigstring.of_string string) ~pos:0 ~len:(String.length string);
-    printf !"%{sexp: t}\n" t
+    if after_finalise then finalise t ();
+    printf !"%{sexp: _ t}\n" t
   in
   test "com";
   [%expect
@@ -617,7 +750,20 @@ let%expect_test "reading header" =
       ((raw
         ((data "") (total_payload_read 0)
          (state (Reading_payload (payload_length 123)))))
-       (state Reading_tag)) |}]
+       (state Reading_tag)) |}];
+  test ~after_finalise:true "blob 5\0001234";
+  [%expect
+    {|
+    ((raw ((data "") (total_payload_read 4) (state (Error Incorrect_length))))
+     (state Reading_blob)) |}];
+  test ~after_finalise:true "blob 5\00012345";
+  [%expect
+    {| ((raw ((data "") (total_payload_read 5) (state Done))) (state Reading_blob)) |}];
+  test ~after_finalise:true "blob 5\000123456";
+  [%expect
+    {|
+    ((raw ((data "") (total_payload_read 6) (state (Error Incorrect_length))))
+     (state Reading_blob)) |}]
 ;;
 
 let%expect_test "read blob" =
@@ -632,11 +778,12 @@ let%expect_test "read blob" =
       ~on_tree_line:(fun _ _ ~name:_ -> failwith "Expected blob")
       ~on_tag:(fun _ -> failwith "Expected blob")
       ~on_error:Error.raise
+      Do_not_validate_sha1
   in
   let t = new_t () in
   append_data t blob_text ~pos:0 ~len:(Bigstring.length blob_text);
-  finalise t;
-  printf !"%{sexp: t}\n" t;
+  finalise t ();
+  printf !"%{sexp: _ t}\n" t;
   [%expect
     {|
         Blob size: 16
@@ -646,8 +793,8 @@ let%expect_test "read blob" =
   for i = 0 to Bigstring.length blob_text - 1 do
     append_data t blob_text ~pos:i ~len:1
   done;
-  finalise t;
-  printf !"%{sexp: t}\n" t;
+  finalise t ();
+  printf !"%{sexp: _ t}\n" t;
   [%expect
     {|
         Blob size: 16
@@ -670,6 +817,51 @@ let%expect_test "read blob" =
         ((raw ((data "") (total_payload_read 16) (state Done))) (state Reading_blob)) |}]
 ;;
 
+let%expect_test "read blob, check sha1" =
+  let blob_text = Bigstring.of_string "blob 16\0001a2a3a4a5a6a7a8a" in
+  let new_t () =
+    create
+      ~initial_buffer_size:1
+      ~on_blob_size:(fun size -> printf "Blob size: %d\n" size)
+      ~on_blob_chunk:(fun buf ~pos ~len ->
+        printf "Blob chunk: %s\n" (Bigstring.To_string.sub buf ~pos ~len))
+      ~on_commit:(fun _ -> failwith "Expected blob")
+      ~on_tree_line:(fun _ _ ~name:_ -> failwith "Expected blob")
+      ~on_tag:(fun _ -> failwith "Expected blob")
+      ~on_error:Error.raise
+      Validate_sha1
+  in
+  let t = new_t () in
+  append_data t blob_text ~pos:0 ~len:(Bigstring.length blob_text);
+  Expect_test_helpers.show_raise (fun () ->
+    finalise t (Sha1.Hex.of_string "0000000000000000000000000000000000000000"));
+  printf !"%{sexp: _ t}\n" t;
+  [%expect
+    {|
+        Blob size: 16
+        Blob chunk: 1a2a3a4a5a6a7a8a
+        (raised (
+          Unexpected_sha1
+          (actual_sha1 33b65c6cea5fc7a2da684fbbedd1d3fe3ca9cec5)
+          (expected_sha1 0000000000000000000000000000000000000000)))
+        ((raw
+          ((data "") (total_payload_read 16)
+           (state
+            (Error
+             (Unexpected_sha1 (actual_sha1 33b65c6cea5fc7a2da684fbbedd1d3fe3ca9cec5)
+              (expected_sha1 0000000000000000000000000000000000000000))))))
+         (state Reading_blob)) |}];
+  let t = new_t () in
+  append_data t blob_text ~pos:0 ~len:(Bigstring.length blob_text);
+  finalise t (Sha1.Hex.of_string "33b65c6cea5fc7a2da684fbbedd1d3fe3ca9cec5");
+  printf !"%{sexp: _ t}\n" t;
+  [%expect
+    {|
+    Blob size: 16
+    Blob chunk: 1a2a3a4a5a6a7a8a
+    ((raw ((data "") (total_payload_read 16) (state Done))) (state Reading_blob)) |}]
+;;
+
 let%expect_test "read commit" =
   let commit_text =
     Bigstring.of_string
@@ -687,11 +879,12 @@ let%expect_test "read commit" =
       ~on_tree_line:(fun _ _ ~name:_ -> failwith "Expected commit")
       ~on_tag:(fun _ -> failwith "Expected commit")
       ~on_error:Error.raise
+      Do_not_validate_sha1
   in
   let t = new_t () in
   append_data t commit_text ~pos:0 ~len:(Bigstring.length commit_text);
-  finalise t;
-  printf !"%{sexp: t}\n" t;
+  finalise t ();
+  printf !"%{sexp: _ t}\n" t;
   [%expect
     {|
         ((tree 2ee0644233b67fb9e83da4d4183cd65e076a1115)
@@ -730,8 +923,8 @@ let%expect_test "read commit" =
     append_data t commit_text ~pos:i ~len:1
   done;
   [%expect {||}];
-  finalise t;
-  printf !"%{sexp: t}\n" t;
+  finalise t ();
+  printf !"%{sexp: _ t}\n" t;
   [%expect
     {|
         ((tree 2ee0644233b67fb9e83da4d4183cd65e076a1115)
@@ -789,11 +982,12 @@ let%expect_test "read tree" =
           name)
       ~on_tag:(fun _ -> failwith "Expected tree")
       ~on_error:Error.raise
+      Do_not_validate_sha1
   in
   let t = new_t () in
   append_data t tree_text ~pos:0 ~len:(Bigstring.length tree_text);
-  finalise t;
-  printf !"%{sexp: t}\n" t;
+  finalise t ();
+  printf !"%{sexp: _ t}\n" t;
   [%expect
     {|
         Received tree line: Directory bec63e37d08c454ad3a60cde90b70f3f7d077852 dir
@@ -806,8 +1000,8 @@ let%expect_test "read tree" =
   for i = 0 to Bigstring.length tree_text - 1 do
     append_data t tree_text ~pos:i ~len:1
   done;
-  finalise t;
-  printf !"%{sexp: t}\n" t;
+  finalise t ();
+  printf !"%{sexp: _ t}\n" t;
   [%expect
     {|
         Received tree line: Directory bec63e37d08c454ad3a60cde90b70f3f7d077852 dir
@@ -835,11 +1029,12 @@ let%expect_test "read tag" =
       ~on_tree_line:(fun _ _ ~name:_ -> failwith "Expected tag")
       ~on_tag:(fun tag -> printf !"%{sexp: Tag.t}\n" tag)
       ~on_error:Error.raise
+      Do_not_validate_sha1
   in
   let t = new_t () in
   append_data t tag_text ~pos:0 ~len:(Bigstring.length tag_text);
-  finalise t;
-  printf !"%{sexp: t}\n" t;
+  finalise t ();
+  printf !"%{sexp: _ t}\n" t;
   [%expect
     {|
         ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
@@ -854,8 +1049,8 @@ let%expect_test "read tag" =
     append_data t tag_text ~pos:i ~len:1
   done;
   [%expect {||}];
-  finalise t;
-  printf !"%{sexp: t}\n" t;
+  finalise t ();
+  printf !"%{sexp: _ t}\n" t;
   [%expect
     {|
         ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
@@ -867,4 +1062,22 @@ let%expect_test "read tag" =
         ((raw ((data "") (total_payload_read 150) (state Done))) (state Reading_tag)) |}]
 ;;
 
-let create = create ~initial_buffer_size:(1 lsl 16)
+let create
+      ~on_blob_size
+      ~on_blob_chunk
+      ~on_commit
+      ~on_tree_line
+      ~on_tag
+      ~on_error
+      validation
+  =
+  create
+    ~initial_buffer_size:(1 lsl 16)
+    ~on_blob_size
+    ~on_blob_chunk
+    ~on_commit
+    ~on_tree_line
+    ~on_tag
+    ~on_error
+    validation
+;;
