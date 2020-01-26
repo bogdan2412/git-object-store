@@ -1,4 +1,5 @@
-open Core
+open! Core
+open! Import
 
 module Raw_kernel = struct
   module State : sig

@@ -1,5 +1,6 @@
-open Core
-open Async
+open! Core
+open! Async
+open! Import
 
 type 'Sha1_validation t =
   { git_object_parser : 'Sha1_validation Git_object_parser.t

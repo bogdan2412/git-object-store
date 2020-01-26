@@ -1,5 +1,6 @@
-open Core
-open Async
+open! Core
+open! Async
+open! Import
 
 type 'Sha1_validation t =
   { object_directory : string
