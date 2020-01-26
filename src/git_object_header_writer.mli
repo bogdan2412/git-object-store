@@ -1,4 +1,5 @@
-open Core
+open! Core
+open! Import
 
 (** [header_length] returns the length required to write down a git object header for an
     object of the given type and length. *)

@@ -1,4 +1,5 @@
-open Core
+open! Core
+open! Import
 
 type t =
   { object_sha1 : Sha1.Hex.t

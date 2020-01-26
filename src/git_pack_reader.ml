@@ -1,5 +1,6 @@
-open Core
-open Async
+open! Core
+open! Async
+open! Import
 
 (** Skip over bytes that are used to represent a variable length integer and return the
     next position in the buffer from which other data can be read. *)

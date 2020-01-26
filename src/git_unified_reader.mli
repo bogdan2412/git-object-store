@@ -1,8 +1,9 @@
 (** Module that can transparently read git objects both from packs and regular unpacked
     files. *)
 
-open Core
-open Async
+open! Core
+open! Async
+open! Import
 
 type _ t
 

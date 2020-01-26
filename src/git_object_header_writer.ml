@@ -1,4 +1,5 @@
-open Core
+open! Core
+open! Import
 
 let rec int_as_string_length ~acc n =
   if n <= 9 then acc + 1 else int_as_string_length ~acc:(acc + 1) (n / 10)

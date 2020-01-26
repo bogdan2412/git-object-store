@@ -1,5 +1,6 @@
-open Core
-open Async
+open! Core
+open! Async
+open! Import
 
 module Raw : sig
   (** The [Raw] module receives chunks of data, compresses it with zlib,

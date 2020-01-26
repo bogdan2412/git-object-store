@@ -1,4 +1,5 @@
-open Core
+open! Core
+open! Import
 
 type t =
   { tree : Sha1.Hex.t

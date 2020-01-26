@@ -1,4 +1,5 @@
-open Core
+open! Core
+open! Import
 
 let[@inline] mode_bytes_0_to_3 (file_mode : File_mode.t) =
   match file_mode with

@@ -1,4 +1,5 @@
-open Core
+open! Core
+open! Import
 
 module Git_object_payload_parser : sig
   module State : sig
