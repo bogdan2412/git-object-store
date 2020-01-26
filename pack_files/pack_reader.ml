@@ -108,14 +108,14 @@ module Base_object_parser : sig
   val finalise : _ t -> unit
 end = struct
   type 'Sha1_validation t =
-    { git_object_parser : 'Sha1_validation Git_object_parser.t
+    { object_parser : 'Sha1_validation Object_parser.t
     ; zlib_inflate : Zlib.Inflate.t
     ; mutable expected_sha1 : 'Sha1_validation
     }
 
   let create (type a) (sha1_validation : a Sha1_validation.t) : a t =
-    let git_object_parser =
-      Git_object_parser.create
+    let object_parser =
+      Object_parser.create
         ~on_blob_size:(fun (_ : int) -> ())
         ~on_blob_chunk:(fun (_ : Bigstring.t) ~pos:(_ : int) ~len:(_ : int) -> ())
         ~on_commit:(fun (_ : Commit.t) -> ())
@@ -127,12 +127,12 @@ end = struct
     in
     let zlib_inflate =
       Zlib.Inflate.create_uninitialised ~on_data_chunk:(fun buf ~pos ~len ->
-        Git_object_parser.append_data git_object_parser buf ~pos ~len)
+        Object_parser.append_data object_parser buf ~pos ~len)
     in
     match sha1_validation with
-    | Do_not_validate_sha1 -> { git_object_parser; zlib_inflate; expected_sha1 = () }
+    | Do_not_validate_sha1 -> { object_parser; zlib_inflate; expected_sha1 = () }
     | Validate_sha1 ->
-      { git_object_parser
+      { object_parser
       ; zlib_inflate
       ; expected_sha1 = Sha1.Hex.of_string "0000000000000000000000000000000000000000"
       }
@@ -140,29 +140,29 @@ end = struct
 
   let reset_for_reading_blob t ~payload_length ~on_size ~on_chunk expected_sha1 =
     Zlib.Inflate.init_or_reset t.zlib_inflate;
-    Git_object_parser.set_on_blob t.git_object_parser ~on_size ~on_chunk;
-    Git_object_parser.reset_for_reading_blob t.git_object_parser ~payload_length;
+    Object_parser.set_on_blob t.object_parser ~on_size ~on_chunk;
+    Object_parser.reset_for_reading_blob t.object_parser ~payload_length;
     t.expected_sha1 <- expected_sha1
   ;;
 
   let reset_for_reading_commit t ~payload_length ~on_commit expected_sha1 =
     Zlib.Inflate.init_or_reset t.zlib_inflate;
-    Git_object_parser.set_on_commit t.git_object_parser on_commit;
-    Git_object_parser.reset_for_reading_commit t.git_object_parser ~payload_length;
+    Object_parser.set_on_commit t.object_parser on_commit;
+    Object_parser.reset_for_reading_commit t.object_parser ~payload_length;
     t.expected_sha1 <- expected_sha1
   ;;
 
   let reset_for_reading_tree t ~payload_length ~on_tree_line expected_sha1 =
     Zlib.Inflate.init_or_reset t.zlib_inflate;
-    Git_object_parser.set_on_tree_line t.git_object_parser on_tree_line;
-    Git_object_parser.reset_for_reading_tree t.git_object_parser ~payload_length;
+    Object_parser.set_on_tree_line t.object_parser on_tree_line;
+    Object_parser.reset_for_reading_tree t.object_parser ~payload_length;
     t.expected_sha1 <- expected_sha1
   ;;
 
   let reset_for_reading_tag t ~payload_length ~on_tag expected_sha1 =
     Zlib.Inflate.init_or_reset t.zlib_inflate;
-    Git_object_parser.set_on_tag t.git_object_parser on_tag;
-    Git_object_parser.reset_for_reading_tag t.git_object_parser ~payload_length;
+    Object_parser.set_on_tag t.object_parser on_tag;
+    Object_parser.reset_for_reading_tag t.object_parser ~payload_length;
     t.expected_sha1 <- expected_sha1
   ;;
 
@@ -170,7 +170,7 @@ end = struct
 
   let finalise t =
     Zlib.Inflate.finalise t.zlib_inflate;
-    Git_object_parser.finalise t.git_object_parser t.expected_sha1
+    Object_parser.finalise t.object_parser t.expected_sha1
   ;;
 end
 
@@ -234,7 +234,7 @@ end = struct
     ; mutable result_buf : Bigstring.t
     ; mutable result_len : int
     ; result_zlib_inflate : Zlib.Inflate.t
-    ; git_object_parser : 'Sha1_validation Git_object_parser.t
+    ; object_parser : 'Sha1_validation Object_parser.t
     }
   [@@deriving fields]
 
@@ -315,8 +315,8 @@ end = struct
   ;;
 
   let create sha1_validation =
-    let git_object_parser =
-      Git_object_parser.create
+    let object_parser =
+      Object_parser.create
         ~on_blob_size:(fun (_ : int) -> ())
         ~on_blob_chunk:(fun (_ : Bigstring.t) ~pos:(_ : int) ~len:(_ : int) -> ())
         ~on_commit:(fun (_ : Commit.t) -> ())
@@ -338,7 +338,7 @@ end = struct
             Bigstring.create (if Core.am_running_inline_test then 1 else 1 lsl 15)
         ; result_len = 0
         ; result_zlib_inflate = Lazy.force result_zlib_inflate
-        ; git_object_parser
+        ; object_parser
         }
     and result_zlib_inflate =
       lazy
@@ -418,34 +418,22 @@ end = struct
     =
     (match (object_type : Object_type.t) with
      | Commit ->
-       Git_object_parser.set_on_commit t.git_object_parser on_commit;
-       Git_object_parser.reset_for_reading_commit
-         t.git_object_parser
-         ~payload_length:t.result_len
+       Object_parser.set_on_commit t.object_parser on_commit;
+       Object_parser.reset_for_reading_commit t.object_parser ~payload_length:t.result_len
      | Tree ->
-       Git_object_parser.set_on_tree_line t.git_object_parser on_tree_line;
-       Git_object_parser.reset_for_reading_tree
-         t.git_object_parser
-         ~payload_length:t.result_len
+       Object_parser.set_on_tree_line t.object_parser on_tree_line;
+       Object_parser.reset_for_reading_tree t.object_parser ~payload_length:t.result_len
      | Blob ->
-       Git_object_parser.set_on_blob
-         t.git_object_parser
+       Object_parser.set_on_blob
+         t.object_parser
          ~on_size:on_blob_size
          ~on_chunk:on_blob_chunk;
-       Git_object_parser.reset_for_reading_blob
-         t.git_object_parser
-         ~payload_length:t.result_len
+       Object_parser.reset_for_reading_blob t.object_parser ~payload_length:t.result_len
      | Tag ->
-       Git_object_parser.set_on_tag t.git_object_parser on_tag;
-       Git_object_parser.reset_for_reading_tag
-         t.git_object_parser
-         ~payload_length:t.result_len);
-    Git_object_parser.append_data
-      t.git_object_parser
-      t.result_buf
-      ~pos:0
-      ~len:t.result_len;
-    Git_object_parser.finalise t.git_object_parser sha1_validation
+       Object_parser.set_on_tag t.object_parser on_tag;
+       Object_parser.reset_for_reading_tag t.object_parser ~payload_length:t.result_len);
+    Object_parser.append_data t.object_parser t.result_buf ~pos:0 ~len:t.result_len;
+    Object_parser.finalise t.object_parser sha1_validation
   ;;
 end
 
@@ -780,7 +768,7 @@ module Index = struct
            Delta_object_parser.compute_result delta_object_parser);
         let sha1_compute = Sha1.Compute.init_or_reset sha1_compute_uninit in
         let header_len =
-          Git_object_header_writer.write_from_left
+          Object_header_writer.write_from_left
             object_type_buf
             ~pos:0
             object_.object_type
@@ -1257,7 +1245,7 @@ module Read_raw_object_function = struct
     | Validate_sha1 ->
       let sha1_context = Sha1.Compute.init_or_reset sha1_context in
       let header_len =
-        Git_object_header_writer.write_from_left buf ~pos:0 object_type ~object_length:len
+        Object_header_writer.write_from_left buf ~pos:0 object_type ~object_length:len
       in
       Sha1.Compute.process sha1_context buf ~pos:0 ~len:header_len;
       Sha1.Compute.process

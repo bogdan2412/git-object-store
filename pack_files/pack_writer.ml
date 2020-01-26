@@ -25,7 +25,7 @@ type 'Sha1_validation t =
   ; writer : Writer.t
   ; mutable items_in_pack : int
   ; pack_object_zlib_deflate : Zlib.Deflate.t
-  ; raw_object_parser : 'Sha1_validation Git_object_parser.Raw.t
+  ; raw_object_parser : 'Sha1_validation Object_parser.Raw.t
   ; raw_object_zlib_inflate : Zlib.Inflate.t
   }
 
@@ -72,7 +72,7 @@ let create ~pack_directory sha1_validation =
       Writer.write_bigstring writer buf ~pos ~len)
   in
   let raw_object_parser =
-    Git_object_parser.Raw.create
+    Object_parser.Raw.create
       ~on_header:(fun object_type ~size ->
         write_object_type_and_length writer object_type ~size)
       ~on_payload_chunk:(fun buf ~pos ~len ~final:_ ->
@@ -83,7 +83,7 @@ let create ~pack_directory sha1_validation =
   in
   let raw_object_zlib_inflate =
     Zlib.Inflate.create_uninitialised ~on_data_chunk:(fun buf ~pos ~len ->
-      Git_object_parser.Raw.append_data raw_object_parser buf ~pos ~len)
+      Object_parser.Raw.append_data raw_object_parser buf ~pos ~len)
   in
   { pack_directory
   ; temp_file_name
@@ -104,7 +104,7 @@ let abort t =
 let add_object_exn t ~object_file expected_sha1 =
   t.items_in_pack <- t.items_in_pack + 1;
   Zlib.Deflate.init_or_reset t.pack_object_zlib_deflate;
-  Git_object_parser.Raw.reset t.raw_object_parser;
+  Object_parser.Raw.reset t.raw_object_parser;
   Zlib.Inflate.init_or_reset t.raw_object_zlib_inflate;
   match%map
     Reader.with_file object_file ~f:(fun reader ->
@@ -114,7 +114,7 @@ let add_object_exn t ~object_file expected_sha1 =
   with
   | `Eof ->
     Zlib.Inflate.finalise t.raw_object_zlib_inflate;
-    Git_object_parser.Raw.finalise t.raw_object_parser expected_sha1;
+    Object_parser.Raw.finalise t.raw_object_parser expected_sha1;
     Zlib.Deflate.finalise t.pack_object_zlib_deflate
   | `Eof_with_unconsumed_data _ ->
     failwith "Reader left unconsumed input, should be impossible"
@@ -177,7 +177,7 @@ let finalise_exn t =
       (sprintf !"pack-%{Sha1.Hex.Volatile}.pack" (Sha1.Compute.get_hex sha1))
   in
   let%bind () = Sys.rename t.temp_file_name file_name in
-  let%bind () = Git_pack_reader.index_pack ~pack_file:file_name >>| ok_exn in
+  let%bind () = Pack_reader.index_pack ~pack_file:file_name >>| ok_exn in
   return file_name
 ;;
 
@@ -259,7 +259,7 @@ let%expect_test "write simple pack" =
       let%bind () =
         [%expect {| pack-b883b23ef64c73bd5909caf3596129cb0816f07d.pack |}]
       in
-      let%bind () = Git_pack_reader.For_testing.print_out_pack_file pack_file in
+      let%bind () = Pack_reader.For_testing.print_out_pack_file pack_file in
       [%expect
         {|
         items in pack: 5
