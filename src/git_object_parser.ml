@@ -881,101 +881,102 @@ let%expect_test "read blob, check sha1" =
 ;;
 
 let%expect_test "read commit" =
-  let commit_text =
-    Bigstring.of_string
-      (sprintf
-         "commit %d\000%s"
-         (String.length Commit.For_testing.example_git_object_payload)
-         Commit.For_testing.example_git_object_payload)
-  in
-  let new_t () =
-    create
-      ~initial_buffer_size:1
-      ~on_blob_size:(fun _ -> failwith "Expected commit")
-      ~on_blob_chunk:(fun _ ~pos:_ ~len:_ -> failwith "Expected commit")
-      ~on_commit:(fun commit -> printf !"%{sexp: Commit.t}\n" commit)
-      ~on_tree_line:(fun _ _ ~name:_ -> failwith "Expected commit")
-      ~on_tag:(fun _ -> failwith "Expected commit")
-      ~on_error:Error.raise
-      Do_not_validate_sha1
-  in
-  let t = new_t () in
-  append_data t commit_text ~pos:0 ~len:(Bigstring.length commit_text);
-  finalise t ();
-  printf !"%{sexp: _ t}\n" t;
-  [%expect
-    {|
-        ((tree 2ee0644233b67fb9e83da4d4183cd65e076a1115)
-         (parents
-          (46f17af77006c41c0e20556a949aa7fc4a14bed0
-           a9b129d414fcb4d596eba78b870e1f780b60b091))
-         (author
-          ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-           (timestamp (2018-12-02 09:03:54.000000000-05:00)) (zone UTC-5)))
-         (committer
-          ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-           (timestamp (2018-12-02 09:03:54.000000000-05:00)) (zone UTC-5)))
-         (encoding (iso-8859-8))
-         (merge_tags
-          (((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e)
-            (object_type Commit) (tag vtest)
-            (tagger
-             (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-               (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
-            (description "test tag"))))
-         (gpg_signature
-          ( "-----BEGIN PGP SIGNATURE-----\
-           \nVersion: GnuPG v1.4\
-           \n\
-           \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
-           \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
-           \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
-           \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
-           \nXXXXXXXX\
-           \n-----END PGP SIGNATURE-----"))
-         (description "Merge branch 'branch'\n"))
-        ((raw ((data "") (total_payload_read 830) (state Done)))
-         (state Reading_commit)) |}];
-  let t = new_t () in
-  for i = 0 to Bigstring.length commit_text - 1 do
-    append_data t commit_text ~pos:i ~len:1
-  done;
-  [%expect {||}];
-  finalise t ();
-  printf !"%{sexp: _ t}\n" t;
-  [%expect
-    {|
-        ((tree 2ee0644233b67fb9e83da4d4183cd65e076a1115)
-         (parents
-          (46f17af77006c41c0e20556a949aa7fc4a14bed0
-           a9b129d414fcb4d596eba78b870e1f780b60b091))
-         (author
-          ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-           (timestamp (2018-12-02 09:03:54.000000000-05:00)) (zone UTC-5)))
-         (committer
-          ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-           (timestamp (2018-12-02 09:03:54.000000000-05:00)) (zone UTC-5)))
-         (encoding (iso-8859-8))
-         (merge_tags
-          (((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e)
-            (object_type Commit) (tag vtest)
-            (tagger
-             (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-               (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
-            (description "test tag"))))
-         (gpg_signature
-          ( "-----BEGIN PGP SIGNATURE-----\
-           \nVersion: GnuPG v1.4\
-           \n\
-           \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
-           \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
-           \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
-           \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
-           \nXXXXXXXX\
-           \n-----END PGP SIGNATURE-----"))
-         (description "Merge branch 'branch'\n"))
-        ((raw ((data "") (total_payload_read 830) (state Done)))
-         (state Reading_commit)) |}]
+  Expect_test_time_zone.with_fixed_time_zone (fun () ->
+    let commit_text =
+      Bigstring.of_string
+        (sprintf
+           "commit %d\000%s"
+           (String.length Commit.For_testing.example_git_object_payload)
+           Commit.For_testing.example_git_object_payload)
+    in
+    let new_t () =
+      create
+        ~initial_buffer_size:1
+        ~on_blob_size:(fun _ -> failwith "Expected commit")
+        ~on_blob_chunk:(fun _ ~pos:_ ~len:_ -> failwith "Expected commit")
+        ~on_commit:(fun commit -> printf !"%{sexp: Commit.t}\n" commit)
+        ~on_tree_line:(fun _ _ ~name:_ -> failwith "Expected commit")
+        ~on_tag:(fun _ -> failwith "Expected commit")
+        ~on_error:Error.raise
+        Do_not_validate_sha1
+    in
+    let t = new_t () in
+    append_data t commit_text ~pos:0 ~len:(Bigstring.length commit_text);
+    finalise t ();
+    printf !"%{sexp: _ t}\n" t;
+    [%expect
+      {|
+          ((tree 2ee0644233b67fb9e83da4d4183cd65e076a1115)
+           (parents
+            (46f17af77006c41c0e20556a949aa7fc4a14bed0
+             a9b129d414fcb4d596eba78b870e1f780b60b091))
+           (author
+            ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+             (timestamp (2018-12-02 09:03:54.000000000-05:00)) (zone UTC-5)))
+           (committer
+            ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+             (timestamp (2018-12-02 09:03:54.000000000-05:00)) (zone UTC-5)))
+           (encoding (iso-8859-8))
+           (merge_tags
+            (((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e)
+              (object_type Commit) (tag vtest)
+              (tagger
+               (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+                 (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+              (description "test tag"))))
+           (gpg_signature
+            ( "-----BEGIN PGP SIGNATURE-----\
+             \nVersion: GnuPG v1.4\
+             \n\
+             \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
+             \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
+             \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
+             \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
+             \nXXXXXXXX\
+             \n-----END PGP SIGNATURE-----"))
+           (description "Merge branch 'branch'\n"))
+          ((raw ((data "") (total_payload_read 830) (state Done)))
+           (state Reading_commit)) |}];
+    let t = new_t () in
+    for i = 0 to Bigstring.length commit_text - 1 do
+      append_data t commit_text ~pos:i ~len:1
+    done;
+    [%expect {||}];
+    finalise t ();
+    printf !"%{sexp: _ t}\n" t;
+    [%expect
+      {|
+          ((tree 2ee0644233b67fb9e83da4d4183cd65e076a1115)
+           (parents
+            (46f17af77006c41c0e20556a949aa7fc4a14bed0
+             a9b129d414fcb4d596eba78b870e1f780b60b091))
+           (author
+            ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+             (timestamp (2018-12-02 09:03:54.000000000-05:00)) (zone UTC-5)))
+           (committer
+            ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+             (timestamp (2018-12-02 09:03:54.000000000-05:00)) (zone UTC-5)))
+           (encoding (iso-8859-8))
+           (merge_tags
+            (((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e)
+              (object_type Commit) (tag vtest)
+              (tagger
+               (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+                 (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+              (description "test tag"))))
+           (gpg_signature
+            ( "-----BEGIN PGP SIGNATURE-----\
+             \nVersion: GnuPG v1.4\
+             \n\
+             \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
+             \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
+             \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
+             \nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\
+             \nXXXXXXXX\
+             \n-----END PGP SIGNATURE-----"))
+           (description "Merge branch 'branch'\n"))
+          ((raw ((data "") (total_payload_read 830) (state Done)))
+           (state Reading_commit)) |}])
 ;;
 
 let%expect_test "read tree" =
@@ -1031,53 +1032,54 @@ let%expect_test "read tree" =
 ;;
 
 let%expect_test "read tag" =
-  let tag_text =
-    Bigstring.of_string
-      (sprintf
-         "tag %d\000%s"
-         (String.length Tag.For_testing.example_git_object_payload)
-         Tag.For_testing.example_git_object_payload)
-  in
-  let new_t () =
-    create
-      ~initial_buffer_size:1
-      ~on_blob_size:(fun _ -> failwith "Expected tag")
-      ~on_blob_chunk:(fun _ ~pos:_ ~len:_ -> failwith "Expected tag")
-      ~on_commit:(fun _ -> failwith "Expected tag")
-      ~on_tree_line:(fun _ _ ~name:_ -> failwith "Expected tag")
-      ~on_tag:(fun tag -> printf !"%{sexp: Tag.t}\n" tag)
-      ~on_error:Error.raise
-      Do_not_validate_sha1
-  in
-  let t = new_t () in
-  append_data t tag_text ~pos:0 ~len:(Bigstring.length tag_text);
-  finalise t ();
-  printf !"%{sexp: _ t}\n" t;
-  [%expect
-    {|
-        ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
-         (tag vtest)
-         (tagger
-          (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-            (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
-         (description "test tag\n"))
-        ((raw ((data "") (total_payload_read 150) (state Done))) (state Reading_tag)) |}];
-  let t = new_t () in
-  for i = 0 to Bigstring.length tag_text - 1 do
-    append_data t tag_text ~pos:i ~len:1
-  done;
-  [%expect {||}];
-  finalise t ();
-  printf !"%{sexp: _ t}\n" t;
-  [%expect
-    {|
-        ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
-         (tag vtest)
-         (tagger
-          (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-            (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
-         (description "test tag\n"))
-        ((raw ((data "") (total_payload_read 150) (state Done))) (state Reading_tag)) |}]
+  Expect_test_time_zone.with_fixed_time_zone (fun () ->
+    let tag_text =
+      Bigstring.of_string
+        (sprintf
+           "tag %d\000%s"
+           (String.length Tag.For_testing.example_git_object_payload)
+           Tag.For_testing.example_git_object_payload)
+    in
+    let new_t () =
+      create
+        ~initial_buffer_size:1
+        ~on_blob_size:(fun _ -> failwith "Expected tag")
+        ~on_blob_chunk:(fun _ ~pos:_ ~len:_ -> failwith "Expected tag")
+        ~on_commit:(fun _ -> failwith "Expected tag")
+        ~on_tree_line:(fun _ _ ~name:_ -> failwith "Expected tag")
+        ~on_tag:(fun tag -> printf !"%{sexp: Tag.t}\n" tag)
+        ~on_error:Error.raise
+        Do_not_validate_sha1
+    in
+    let t = new_t () in
+    append_data t tag_text ~pos:0 ~len:(Bigstring.length tag_text);
+    finalise t ();
+    printf !"%{sexp: _ t}\n" t;
+    [%expect
+      {|
+          ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
+           (tag vtest)
+           (tagger
+            (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+              (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+           (description "test tag\n"))
+          ((raw ((data "") (total_payload_read 150) (state Done))) (state Reading_tag)) |}];
+    let t = new_t () in
+    for i = 0 to Bigstring.length tag_text - 1 do
+      append_data t tag_text ~pos:i ~len:1
+    done;
+    [%expect {||}];
+    finalise t ();
+    printf !"%{sexp: _ t}\n" t;
+    [%expect
+      {|
+          ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
+           (tag vtest)
+           (tagger
+            (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+              (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+           (description "test tag\n"))
+          ((raw ((data "") (total_payload_read 150) (state Done))) (state Reading_tag)) |}])
 ;;
 
 let create

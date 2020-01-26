@@ -77,26 +77,26 @@ module For_testing = struct
   let example_tag = parse_git_object_payload_exn example_git_object_payload
 
   let%expect_test "round-trip" =
-    Time_ns.set_sexp_zone (Time_ns.Zone.of_string "America/New_York");
-    printf !"%{sexp: t}\n" example_tag;
-    [%expect
-      {|
-         ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
-          (tag vtest)
-          (tagger
-           (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-             (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
-          (description "test tag\n")) |}];
-    let as_payload = format_as_git_object_payload example_tag in
-    printf !"%s\n" as_payload;
-    [%expect
-      {|
-         object fd0b2091596e649f6ca4521262c3a0cadb0d042e
-         type commit
-         tag vtest
-         tagger Bogdan-Cristian Tataroiu <bogdan@example.com> 1547392527 +0000
+    Expect_test_time_zone.with_fixed_time_zone (fun () ->
+      printf !"%{sexp: t}\n" example_tag;
+      [%expect
+        {|
+           ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
+            (tag vtest)
+            (tagger
+             (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+               (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+            (description "test tag\n")) |}];
+      let as_payload = format_as_git_object_payload example_tag in
+      printf !"%s\n" as_payload;
+      [%expect
+        {|
+           object fd0b2091596e649f6ca4521262c3a0cadb0d042e
+           type commit
+           tag vtest
+           tagger Bogdan-Cristian Tataroiu <bogdan@example.com> 1547392527 +0000
 
-         test tag |}];
-    [%test_eq: string] example_git_object_payload as_payload
+           test tag |}];
+      [%test_eq: string] example_git_object_payload as_payload)
   ;;
 end

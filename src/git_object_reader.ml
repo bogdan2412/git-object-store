@@ -206,29 +206,30 @@ let%expect_test "link blob object" =
 
 let%expect_test "commit object" =
   Expect_test_helpers.with_temp_dir (fun dir ->
-    let t = Expect_test_helpers.commit_reader Do_not_validate_sha1 in
-    let file = dir ^/ "git-object" in
-    let%bind () =
-      Writer.save
-        file
-        ~contents:
-          "x\001\165\141A\n\
-           \1940\016E]\231\020\179\023%I\211HAD\244\n\
-           ^`&\153h\1924\146N\193\227\027\244\b\254\229{\240~\168\165d\001\171\237F\0263\2080E\228\128i\162\224\244\024\153\241`Sr1P\028\137\140\247f`2I\225*\143\218\224R\239\017\231\221\181\229E2\206pC\193V\243\n\
-           G\250\1543\191\177\188\158\188\015\181\156\192\140\206\251\201X\237`\171\251T\167\253^\248\239\144\018^\004~9\245\001-iD\192"
-    in
-    let%bind () = read_file t ~file () in
-    [%expect
-      {|
-         ((tree b39daecaf9bc405deea72ff4dcbd5bb16613eb1f) (parents ())
-          (author
-           ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-            (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
-          (committer
-           ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-            (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
-          (encoding ()) (merge_tags ()) (gpg_signature ())
-          (description "test commit\n")) |}])
+    Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
+      let t = Expect_test_helpers.commit_reader Do_not_validate_sha1 in
+      let file = dir ^/ "git-object" in
+      let%bind () =
+        Writer.save
+          file
+          ~contents:
+            "x\001\165\141A\n\
+             \1940\016E]\231\020\179\023%I\211HAD\244\n\
+             ^`&\153h\1924\146N\193\227\027\244\b\254\229{\240~\168\165d\001\171\237F\0263\2080E\228\128i\162\224\244\024\153\241`Sr1P\028\137\140\247f`2I\225*\143\218\224R\239\017\231\221\181\229E2\206pC\193V\243\n\
+             G\250\1543\191\177\188\158\188\015\181\156\192\140\206\251\201X\237`\171\251T\167\253^\248\239\144\018^\004~9\245\001-iD\192"
+      in
+      let%bind () = read_file t ~file () in
+      [%expect
+        {|
+           ((tree b39daecaf9bc405deea72ff4dcbd5bb16613eb1f) (parents ())
+            (author
+             ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+              (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
+            (committer
+             ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+              (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
+            (encoding ()) (merge_tags ()) (gpg_signature ())
+            (description "test commit\n")) |}]))
 ;;
 
 let%expect_test "tree object" =
@@ -252,23 +253,24 @@ let%expect_test "tree object" =
 
 let%expect_test "tag object" =
   Expect_test_helpers.with_temp_dir (fun dir ->
-    let t = Expect_test_helpers.tag_reader Do_not_validate_sha1 in
-    let file = dir ^/ "git-object" in
-    let%bind () =
-      Writer.save
-        file
-        ~contents:
-          "x\001\029\205Q\n\
-           \1940\016\004P\191s\138\253\023e\155&)\001\017\209+x\129M\178-\017\219\148v\021\189\189\177\24350\240Fh\128\198\226\174\132\007G\129>a\208\232\027\235\029;\227{\023\201X\221h\167cK\024)\005Lh4+\249\206\012\177\140c\022%\213x\011\175[\027x\129k\025\018M\135\219\146W\2014\193\157\132\150\146_p\n\
-           \219r\225\015\141\243\147\143\0218\215{\211\181^[\221\193\030k\148\250[PU\245\003@\1421G"
-    in
-    let%bind () = read_file t ~file () in
-    [%expect
-      {|
-         ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
-          (tag vtest)
-          (tagger
-           (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-             (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
-          (description "test tag\n")) |}])
+    Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
+      let t = Expect_test_helpers.tag_reader Do_not_validate_sha1 in
+      let file = dir ^/ "git-object" in
+      let%bind () =
+        Writer.save
+          file
+          ~contents:
+            "x\001\029\205Q\n\
+             \1940\016\004P\191s\138\253\023e\155&)\001\017\209+x\129M\178-\017\219\148v\021\189\189\177\24350\240Fh\128\198\226\174\132\007G\129>a\208\232\027\235\029;\227{\023\201X\221h\167cK\024)\005Lh4+\249\206\012\177\140c\022%\213x\011\175[\027x\129k\025\018M\135\219\146W\2014\193\157\132\150\146_p\n\
+             \219r\225\015\141\243\147\143\0218\215{\211\181^[\221\193\030k\148\250[PU\245\003@\1421G"
+      in
+      let%bind () = read_file t ~file () in
+      [%expect
+        {|
+           ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
+            (tag vtest)
+            (tagger
+             (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+               (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+            (description "test tag\n")) |}]))
 ;;

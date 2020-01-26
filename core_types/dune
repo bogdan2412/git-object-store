@@ -1,0 +1,6 @@
+(library
+ (name git_core_types)
+ (public_name git_object_store.core_types)
+ (libraries async core git_bindings_sha1)
+ (inline_tests)
+ (preprocess (pps ppx_jane)))
