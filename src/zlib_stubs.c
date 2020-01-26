@@ -68,7 +68,7 @@ static void git_zlib_error(char *fn, value zstream, int ret_code) {
   Field(bucket, 0) = *zlib_error_exn;
   Field(bucket, 1) = s1;
   Field(bucket, 2) = s2;
-  Field(bucket, 3) = Int_val(ret_code);
+  Field(bucket, 3) = Val_int(ret_code);
   End_roots();
   caml_raise(bucket);
 }
@@ -100,18 +100,23 @@ value git_zlib_avail_out(value zstream) {
 
 static void git_zlib_free_zstream_internal(value wrap_stream) {
   z_stream *zstream = Zstream_val(wrap_stream);
+  int ret_code;
 
   switch (State(wrap_stream)) {
   case NOT_INITIALISED:
     break;
   case INITIALISED_INFLATE:
+    ret_code = inflateEnd(zstream);
     git_zlib_error("git_zlib_free_zstream_internal",
-                   wrap_stream, inflateEnd(zstream));
+                   wrap_stream,
+                   ret_code == Z_DATA_ERROR ? 0 : ret_code);
     State(wrap_stream) = NOT_INITIALISED;
     break;
   case INITIALISED_DEFLATE:
+    ret_code = deflateEnd(zstream);
     git_zlib_error("git_zlib_free_zstream_internal",
-                   wrap_stream, deflateEnd(zstream));
+                   wrap_stream,
+                   ret_code == Z_DATA_ERROR ? 0 : ret_code);
     State(wrap_stream) = NOT_INITIALISED;
     break;
   }
