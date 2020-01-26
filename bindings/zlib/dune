@@ -1,0 +1,7 @@
+(library
+ (name git_bindings_zlib)
+ (public_name git_object_store.bindings_zlib)
+ (libraries core)
+ (c_names zlib_stubs)
+ (c_library_flags (-lz))
+ (preprocess (pps ppx_jane)))

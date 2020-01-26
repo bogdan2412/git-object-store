@@ -16,6 +16,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. *)
 
 open! Core
+open! Import
 
 type _ t =
   | Do_not_validate_sha1 : unit t

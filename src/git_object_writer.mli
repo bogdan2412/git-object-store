@@ -15,8 +15,9 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>. *)
 
-open Core
-open Async
+open! Core
+open! Async
+open! Import
 
 module Raw : sig
   (** The [Raw] module receives chunks of data, compresses it with zlib,

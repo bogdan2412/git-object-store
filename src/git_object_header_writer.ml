@@ -15,7 +15,8 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>. *)
 
-open Core
+open! Core
+open! Import
 
 let rec int_as_string_length ~acc n =
   if n <= 9 then acc + 1 else int_as_string_length ~acc:(acc + 1) (n / 10)

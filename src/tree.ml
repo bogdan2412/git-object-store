@@ -15,7 +15,8 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>. *)
 
-open Core
+open! Core
+open! Import
 
 let[@inline] mode_bytes_0_to_3 (file_mode : File_mode.t) =
   match file_mode with

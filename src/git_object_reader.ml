@@ -15,8 +15,9 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>. *)
 
-open Core
-open Async
+open! Core
+open! Async
+open! Import
 
 type 'Sha1_validation t =
   { git_object_parser : 'Sha1_validation Git_object_parser.t

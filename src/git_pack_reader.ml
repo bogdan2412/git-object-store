@@ -15,8 +15,9 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>. *)
 
-open Core
-open Async
+open! Core
+open! Async
+open! Import
 
 (** Skip over bytes that are used to represent a variable length integer and return the
     next position in the buffer from which other data can be read. *)

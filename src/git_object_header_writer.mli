@@ -15,7 +15,8 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>. *)
 
-open Core
+open! Core
+open! Import
 
 (** [header_length] returns the length required to write down a git object header for an
     object of the given type and length. *)

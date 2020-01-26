@@ -15,8 +15,9 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>. *)
 
-open Core
-open Async
+open! Core
+open! Async
+open! Import
 
 let object_directory_param =
   let fail =

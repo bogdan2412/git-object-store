@@ -15,7 +15,8 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>. *)
 
-open Core
+open! Core
+open! Import
 
 module Git_object_payload_parser : sig
   module State : sig
