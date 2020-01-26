@@ -1,5 +1,6 @@
 (executable
  (name git_util)
+ (public_name git-util)
  (libraries
   async
   core
