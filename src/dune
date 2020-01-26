@@ -8,6 +8,7 @@
   expect_test_helpers
   git_bindings_crc32
   git_bindings_sha1
-  git_bindings_zlib)
+  git_bindings_zlib
+  git_core_types)
  (inline_tests)
  (preprocess (pps ppx_jane)))
