@@ -1,6 +1,6 @@
 (library
  (name git_object_files)
- (public_name git_object_store.object_files)
+ (public_name git.object_files)
  (libraries
   async
   core
