@@ -1,15 +1,12 @@
 (library
- (name git_object_store)
- (public_name git_object_store)
+ (name git_object_files)
+ (public_name git_object_store.object_files)
  (libraries
   async
   core
-  digestif.c
   expect_test_helpers
-  git_bindings_crc32
   git_bindings_sha1
   git_bindings_zlib
-  git_core_types
-  git_object_files)
+  git_core_types)
  (inline_tests)
  (preprocess (pps ppx_jane)))

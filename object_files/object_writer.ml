@@ -178,7 +178,7 @@ module With_header = struct
       let data_len = t.pos - t.start in
       assert (data_len >= 0);
       let header_len =
-        Git_object_header_writer.write_from_right
+        Header_writer.write_from_right
           t.buf
           ~pos:(t.start - 1)
           t.object_type
@@ -217,11 +217,7 @@ module With_header = struct
 
     let init_or_reset t object_type ~length =
       let header_len =
-        Git_object_header_writer.write_from_left
-          t.buf
-          ~pos:0
-          object_type
-          ~object_length:length
+        Header_writer.write_from_left t.buf ~pos:0 object_type ~object_length:length
       in
       t.expected <- length;
       t.written <- 0;
@@ -390,9 +386,7 @@ end
 let%expect_test "write known_size blob" =
   Expect_test_helpers.with_temp_dir (fun object_directory ->
     let t = Blob.Known_size.create_uninitialised ~object_directory in
-    let reader =
-      Git_object_reader.Expect_test_helpers.blob_reader Do_not_validate_sha1
-    in
+    let reader = Object_reader.Expect_test_helpers.blob_reader Do_not_validate_sha1 in
     let write_blob blob =
       let%bind () = Blob.Known_size.init_or_reset t ~length:(String.length blob) in
       Blob.Known_size.append_data
@@ -413,7 +407,7 @@ let%expect_test "write known_size blob" =
     let%bind () =
       [%expect {| "x\156K\202\201OR04dH\203,*.QH\203\204I\229\002\000=7\006\020" |}]
     in
-    let%bind () = Git_object_reader.read_file reader ~file:expected_file_path () in
+    let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
     let%bind () = [%expect {|
       Blob size: 11
       Blob chunk: first file |}] in
@@ -427,7 +421,7 @@ let%expect_test "write known_size blob" =
     let%bind () =
       [%expect {| "x\156K\202\201OR04b(NM\206\207KQH\203\204I\229\002\000C\209\006i" |}]
     in
-    let%bind () = Git_object_reader.read_file reader ~file:expected_file_path () in
+    let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
     [%expect {|
       Blob size: 12
       Blob chunk: second file |}])
@@ -436,9 +430,7 @@ let%expect_test "write known_size blob" =
 let%expect_test "write unknown_size blob" =
   Expect_test_helpers.with_temp_dir (fun object_directory ->
     let t = Blob.Unknown_size.create_uninitialised ~object_directory in
-    let reader =
-      Git_object_reader.Expect_test_helpers.blob_reader Do_not_validate_sha1
-    in
+    let reader = Object_reader.Expect_test_helpers.blob_reader Do_not_validate_sha1 in
     let write_blob blob =
       let%bind () = Blob.Unknown_size.init_or_reset t in
       Blob.Unknown_size.append_data
@@ -459,7 +451,7 @@ let%expect_test "write unknown_size blob" =
     let%bind () =
       [%expect {| "x\156K\202\201OR04dH\203,*.QH\203\204I\229\002\000=7\006\020" |}]
     in
-    let%bind () = Git_object_reader.read_file reader ~file:expected_file_path () in
+    let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
     let%bind () = [%expect {|
       Blob size: 11
       Blob chunk: first file |}] in
@@ -473,7 +465,7 @@ let%expect_test "write unknown_size blob" =
     let%bind () =
       [%expect {| "x\156K\202\201OR04b(NM\206\207KQH\203\204I\229\002\000C\209\006i" |}]
     in
-    let%bind () = Git_object_reader.read_file reader ~file:expected_file_path () in
+    let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
     [%expect {|
       Blob size: 12
       Blob chunk: second file |}])
@@ -484,7 +476,7 @@ let%expect_test "write commit" =
     Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
       let t = Commit.create ~object_directory in
       let reader =
-        Git_object_reader.Expect_test_helpers.commit_reader Do_not_validate_sha1
+        Object_reader.Expect_test_helpers.commit_reader Do_not_validate_sha1
       in
       let%bind sha1 = Commit.write t Commit_.For_testing.example_commit in
       printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
@@ -498,7 +490,7 @@ let%expect_test "write commit" =
         [%expect
           {x| "x\156\213\145Oo\2120\016\1979\251S\204\173\007\148j\236\248/B\b\n\171\168\007V\171\210V\\\199\246$\r\"\201*\241V\240\237Iv\133\184p\162'\222\197\158\241\232\1677\207i\026\134\190\128\175\241U\153\153A1\163\213Z\213u\180\174\141\129}\157Ig-}\157\1785\140\206\146\148\210\136#\205<\022\208\182\149\142Z\231\016m\2102!+4\198R\208\129\200\181I\147\212\1453\254\158\167\016\165\n+O\183)\234l\130\229H\206G\239\144e\235<F\139\017\131\020t*O\211\0127S\151i\172>\206\253Rz\026\225\158\n\205S\127\130\183\241\252\242\158\127\208p\252\206\215i\026\222\1294\186v&\232ZC\133\006Q\164\243z\133_\012\2261M\185\031;\232\151\169\242\222\132\202\139\129\231\142\011u0\197o\156\n\180\025\163Z\189oKY\029Z\155H\027%\149U\169&L\148#f\212\138\005\148\159G\134\139\183\181X\t\207\133\151\203\181\251\023\175\174\014\202(\007\175q\149\128\021\180\2266\154\232\142\221\210wPm\186\2175\183{84\007\248r\219\236?\220?\220\237\206}\001\143</\2534\190\129f<\029\026x\150\215z\163|}\161\254+\194\159Aq\137k\183\255\244\183\176\196\231\237\219!\2064\166'\184\186\156W\226\023\025\189\004b" |x}]
       in
-      let%bind () = Git_object_reader.read_file reader ~file:expected_file_path () in
+      let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
       let%bind () =
         [%expect
           {|
@@ -567,7 +559,7 @@ let%expect_test "write commit" =
         [%expect
           {| "x\156\165\141Q\n\002!\016@\251\246\020\243\031\133\186j,DD]\161\011\204\232XB\174\225\206B\199/\182#\244~\031\188\023[\173E\192j\187\145\206\0124\140\t9b\030):\237\0193\030l\206.EJ\158\200\132`\006&\147\021.\242h\029.\237\158p\218]{\153\165\224\0047\020\236\173,p\164\213\156\249\141\245\245\228}l\245\004\198\187\016Fc\181\131\173\254\162\226\186\023\254;\164\132g\129_N}\000-iD\192" |}]
       in
-      let%bind () = Git_object_reader.read_file reader ~file:expected_file_path () in
+      let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
       [%expect
         {|
         ((tree b39daecaf9bc405deea72ff4dcbd5bb16613eb1f) (parents ())
@@ -584,9 +576,7 @@ let%expect_test "write commit" =
 let%expect_test "write tree" =
   Expect_test_helpers.with_temp_dir (fun object_directory ->
     let t = Tree.create_uninitialised ~object_directory in
-    let reader =
-      Git_object_reader.Expect_test_helpers.tree_reader Do_not_validate_sha1
-    in
+    let reader = Object_reader.Expect_test_helpers.tree_reader Do_not_validate_sha1 in
     let%bind () = Tree.init_or_reset t in
     Tree.write_tree_line
       t
@@ -620,7 +610,7 @@ let%expect_test "write tree" =
       [%expect
         {| "x\156+)JMU044e040031QHd0\176\255\217x\164c\135\2086\197\248\218\237\147x\223n\222:w\022T2\137A&\210\169\234\142\183B\148:o\127#\179\128\165g\210\243Y\221&\006@\160\144\204pa\147{nT\254\241=o\253\243~8n\127\206\164\191\150e\178\161\017X2\133!c\239\235\213\203\191H\253_\184j\207\211\224\2273$f86\174\004\000\224\02714" |}]
     in
-    let%bind () = Git_object_reader.read_file reader ~file:expected_file_path () in
+    let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
     let%bind () =
       [%expect
         {|
@@ -647,7 +637,7 @@ let%expect_test "write tree" =
       [%expect
         {| "x\156+)JMU0\178d040031QHaH\171\222\220\218\197\154s2\175\242\192\225\141o\127'\b\199(G\002\000\230<\014\026" |}]
     in
-    let%bind () = Git_object_reader.read_file reader ~file:expected_file_path () in
+    let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
     [%expect
       {| Received tree line: Non_executable_file 667bb3858a056cc96e79c0c3b1edfb60135c2359 d |}])
 ;;
@@ -657,7 +647,7 @@ let%expect_test "write tag" =
     Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
       let t = Tag.create ~object_directory in
       let reader =
-        Git_object_reader.Expect_test_helpers.tag_reader Do_not_validate_sha1
+        Object_reader.Expect_test_helpers.tag_reader Do_not_validate_sha1
       in
       let%bind sha1 = Tag.write t Tag_.For_testing.example_tag in
       printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
@@ -671,7 +661,7 @@ let%expect_test "write tag" =
         [%expect
           {| "x\156\029\205Q\n\1940\016\004P\191s\138\253\023e\155&)\001\017\209+x\129M\178-\017\219\148v\021\189\189\177\24350\240Fh\128\198\226\174\132\007G\129>a\208\232\027\235\029;\227{\023\201X\221h\167cK\024)\005Lh4+\249\206\012\177\140c\022%\213x\011\175[\027x\129k\025\018M\135\219\146W\2014\193\157\132\150\146_p\n\219r\225\015\141\243\147\143\0218\215{\211\181^[\221\193\030k\148\250[P-\245\003@\1421G" |}]
       in
-      let%bind () = Git_object_reader.read_file reader ~file:expected_file_path () in
+      let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
       let%bind () =
         [%expect
           {|
@@ -710,7 +700,7 @@ let%expect_test "write tag" =
         [%expect
           {| "x\156\029\141Q\n\1310\016D\251\157S\236\127\177$&Q\003\165\148\246\n\189\192&\174\193\162F\226\022\218\219\21580\012\195\192\027\198\b\202\186S\242o\n\012\161v\157\r\026\165\014\253`z\175\141m\021\213\173r\131\209\2225V\161\237\154 \005\255V\002\198(v\151\172\1526.%R\134G\138=.\2133\143\027\143\184\192\011\025s\026?p\245\199r\167/\206\235D\151\144\230\219~oZ\221\213F\0268\203]B\020V\129B\026\000\143\151?\209{3z" |}]
       in
-      let%bind () = Git_object_reader.read_file reader ~file:expected_file_path () in
+      let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
       [%expect
         {|
         ((object_sha1 c2985c3a03cdf4db34571e2719f43b9651a586c0) (object_type Tag)

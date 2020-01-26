@@ -20,7 +20,7 @@ open! Async
 open! Import
 
 type 'Sha1_validation t =
-  { git_object_parser : 'Sha1_validation Git_object_parser.t
+  { parser : 'Sha1_validation Parser.t
   ; zlib_inflate : Zlib.Inflate.t
   ; on_error : Error.t -> unit
   }
@@ -34,8 +34,8 @@ let create
       ~on_error
       sha1_validation
   =
-  let git_object_parser =
-    Git_object_parser.create
+  let parser =
+    Parser.create
       ~on_blob_size
       ~on_blob_chunk
       ~on_commit
@@ -45,14 +45,13 @@ let create
       sha1_validation
   in
   let zlib_inflate =
-    Zlib.Inflate.create_uninitialised
-      ~on_data_chunk:(Git_object_parser.append_data git_object_parser)
+    Zlib.Inflate.create_uninitialised ~on_data_chunk:(Parser.append_data parser)
   in
-  { git_object_parser; zlib_inflate; on_error }
+  { parser; zlib_inflate; on_error }
 ;;
 
 let read_file' t ~file ~push_back expected_sha1 =
-  Git_object_parser.reset t.git_object_parser;
+  Parser.reset t.parser;
   Zlib.Inflate.init_or_reset t.zlib_inflate;
   match%map
     Reader.with_file file ~f:(fun reader ->
@@ -73,7 +72,7 @@ let read_file' t ~file ~push_back expected_sha1 =
   | `Eof ->
     Or_error.try_with (fun () ->
       Zlib.Inflate.finalise t.zlib_inflate;
-      Git_object_parser.finalise t.git_object_parser expected_sha1)
+      Parser.finalise t.parser expected_sha1)
     |> Or_error.iter_error ~f:t.on_error
   | `Eof_with_unconsumed_data _ ->
     failwith "Reader left unconsumed input, should be impossible"
@@ -84,19 +83,10 @@ let read_file t ~file expected_sha1 =
   read_file' t ~file ~push_back:(Fn.const (return `Ok)) expected_sha1
 ;;
 
-let set_on_blob t ~on_size ~on_chunk =
-  Git_object_parser.set_on_blob t.git_object_parser ~on_size ~on_chunk
-;;
-
-let set_on_commit t on_commit =
-  Git_object_parser.set_on_commit t.git_object_parser on_commit
-;;
-
-let set_on_tree_line t on_tree_line =
-  Git_object_parser.set_on_tree_line t.git_object_parser on_tree_line
-;;
-
-let set_on_tag t on_tag = Git_object_parser.set_on_tag t.git_object_parser on_tag
+let set_on_blob t ~on_size ~on_chunk = Parser.set_on_blob t.parser ~on_size ~on_chunk
+let set_on_commit t on_commit = Parser.set_on_commit t.parser on_commit
+let set_on_tree_line t on_tree_line = Parser.set_on_tree_line t.parser on_tree_line
+let set_on_tag t on_tag = Parser.set_on_tag t.parser on_tag
 
 module Expect_test_helpers = struct
   let with_temp_dir = Expect_test_helpers.with_temp_dir

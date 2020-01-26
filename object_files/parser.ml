@@ -369,7 +369,7 @@ module Raw = struct
       | Do_not_validate_sha1 { raw_kernel = _ } -> ()
       | Validate_sha1 { raw_kernel = _; sha1_context } ->
         let header_len =
-          Git_object_header_writer.write_from_left
+          Header_writer.write_from_left
             buf
             ~pos:0
             object_type
