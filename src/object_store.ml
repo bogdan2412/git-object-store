@@ -21,9 +21,9 @@ open! Import
 
 type 'Sha1_validation t =
   { object_directory : string
-  ; packs : (string * 'Sha1_validation Git_pack_reader.t) list
+  ; packs : (string * 'Sha1_validation Pack_reader.t) list
   ; sha1_buf : Sha1.Raw.Volatile.t
-  ; read_throttle : 'Sha1_validation Git_object_reader.t Throttle.t
+  ; read_throttle : 'Sha1_validation Object_reader.t Throttle.t
   ; sha1_validation : 'Sha1_validation Sha1_validation.t
   }
 
@@ -54,14 +54,14 @@ let create ~object_directory ~max_concurrent_reads sha1_validation =
     |> List.filter ~f:(fun pack_file -> String.is_suffix ~suffix:".pack" pack_file)
     |> Deferred.Or_error.List.map ~how:`Sequential ~f:(fun pack_file ->
       let pack_file = object_directory ^/ "pack" ^/ pack_file in
-      let%map pack_reader = Git_pack_reader.create ~pack_file sha1_validation in
+      let%map pack_reader = Pack_reader.create ~pack_file sha1_validation in
       pack_file, pack_reader)
   in
   let read_throttle =
     Throttle.create_with
       ~continue_on_error:true
       (List.init max_concurrent_reads ~f:(fun (_ : int) ->
-         Git_object_reader.create
+         Object_reader.create
            ~on_blob_size:unexpected_blob_size
            ~on_blob_chunk:unexpected_blob_chunk
            ~on_commit:unexpected_commit
@@ -98,17 +98,17 @@ let read_object_from_unpacked_file
       ~on_tag
       ~push_back
   =
-  Throttle.enqueue t.read_throttle (fun git_object_reader ->
-    Git_object_reader.set_on_blob
-      git_object_reader
+  Throttle.enqueue t.read_throttle (fun object_reader ->
+    Object_reader.set_on_blob
+      object_reader
       ~on_size:on_blob_size
       ~on_chunk:on_blob_chunk;
-    Git_object_reader.set_on_commit git_object_reader on_commit;
-    Git_object_reader.set_on_tree_line git_object_reader on_tree_line;
-    Git_object_reader.set_on_tag git_object_reader on_tag;
+    Object_reader.set_on_commit object_reader on_commit;
+    Object_reader.set_on_tree_line object_reader on_tree_line;
+    Object_reader.set_on_tag object_reader on_tag;
     let path = unpacked_disk_path t sha1 in
-    Git_object_reader.read_file'
-      git_object_reader
+    Object_reader.read_file'
+      object_reader
       ~file:path
       ~push_back
       (match t.sha1_validation with
@@ -127,7 +127,7 @@ let read_object =
       -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
       -> on_tag:(Tag.t -> unit)
       -> push_back:(unit -> [ `Ok | `Reader_closed ] Deferred.t)
-      -> (string * a Git_pack_reader.t) list
+      -> (string * a Pack_reader.t) list
       -> unit Deferred.t
     =
     fun t
@@ -151,7 +151,7 @@ let read_object =
           ~on_tag
           ~push_back
       | (_, pack) :: packs ->
-        (match Git_pack_reader.find_sha1_index' pack t.sha1_buf with
+        (match Pack_reader.find_sha1_index' pack t.sha1_buf with
          | None ->
            loop_packs
              t
@@ -164,7 +164,7 @@ let read_object =
              ~push_back
              packs
          | Some { index } ->
-           Git_pack_reader.read_object
+           Pack_reader.read_object
              pack
              ~index
              ~on_blob_size
@@ -244,7 +244,7 @@ let with_on_disk_file t sha1 ~f =
     Sha1.Raw.Volatile.of_hex sha1 t.sha1_buf;
     let pack_and_index =
       List.find_map t.packs ~f:(fun (_, pack) ->
-        match Git_pack_reader.find_sha1_index' pack t.sha1_buf with
+        match Pack_reader.find_sha1_index' pack t.sha1_buf with
         | None -> None
         | Some { index } -> Some (pack, index))
     in
@@ -253,7 +253,7 @@ let with_on_disk_file t sha1 ~f =
      | Some (pack, index) ->
        let object_type_and_length = Set_once.create () in
        let data = Set_once.create () in
-       Git_pack_reader.read_raw_object
+       Pack_reader.read_raw_object
          pack
          ~index
          ~on_header:(fun object_type ~size ->
@@ -262,21 +262,19 @@ let with_on_disk_file t sha1 ~f =
            Set_once.set_exn data [%here] (Bigstring.sub buf ~pos ~len));
        let object_type, length = Set_once.get_exn object_type_and_length [%here] in
        let writer =
-         Git_object_writer.With_header.Known_size.create_uninitialised
+         Object_writer.With_header.Known_size.create_uninitialised
            ~object_directory:t.object_directory
        in
        let%bind () =
-         Git_object_writer.With_header.Known_size.init_or_reset writer object_type ~length
+         Object_writer.With_header.Known_size.init_or_reset writer object_type ~length
        in
        let data = Set_once.get_exn data [%here] in
-       Git_object_writer.With_header.Known_size.append_data
+       Object_writer.With_header.Known_size.append_data
          writer
          data
          ~pos:0
          ~len:(Bigstring.length data);
-       let%bind saved_sha1 =
-         Git_object_writer.With_header.Known_size.finalise_exn writer
-       in
+       let%bind saved_sha1 = Object_writer.With_header.Known_size.finalise_exn writer in
        let saved_sha1 = Sha1.Raw.to_hex saved_sha1 in
        assert ([%compare.equal: Sha1.Hex.t] sha1 saved_sha1);
        Monitor.protect (fun () -> f path) ~finally:(fun () -> Unix.unlink path))
@@ -325,11 +323,11 @@ let all_objects_in_store t =
         Deferred.unit))
   in
   List.iter t.packs ~f:(fun (pack_file, pack_reader) ->
-    let items_in_pack = Git_pack_reader.items_in_pack pack_reader in
+    let items_in_pack = Pack_reader.items_in_pack pack_reader in
     for index = 0 to items_in_pack - 1 do
       Hashtbl.add_multi
         result
-        ~key:(Sha1.Raw.Volatile.to_hex (Git_pack_reader.sha1 pack_reader ~index))
+        ~key:(Sha1.Raw.Volatile.to_hex (Pack_reader.sha1 pack_reader ~index))
         ~data:(Object_location.In_pack_file { pack_file; index })
     done);
   return result
