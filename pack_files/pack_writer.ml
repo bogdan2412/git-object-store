@@ -25,6 +25,8 @@ type 'Sha1_validation t =
   ; writer : Writer.t
   ; mutable items_in_pack : int
   ; pack_object_zlib_deflate : Zlib.Deflate.t
+  ; add_object_on_header : Object_type.t -> size:int -> unit
+  ; add_object_on_payload : Bigstring.t -> pos:int -> len:int -> unit
   ; raw_object_reader : 'Sha1_validation Object_reader.Raw.t
   }
 
@@ -84,6 +86,8 @@ let create ~pack_directory sha1_validation =
   ; writer
   ; items_in_pack = 0
   ; pack_object_zlib_deflate
+  ; add_object_on_header = on_header
+  ; add_object_on_payload = on_payload
   ; raw_object_reader
   }
 ;;
@@ -103,6 +107,17 @@ let add_object_exn t ~object_file expected_sha1 =
   Zlib.Deflate.finalise t.pack_object_zlib_deflate
 ;;
 
+let add_object_from_pack_exn t pack_reader ~index =
+  t.items_in_pack <- t.items_in_pack + 1;
+  Zlib.Deflate.init_or_reset t.pack_object_zlib_deflate;
+  Pack_reader.read_raw_object
+    pack_reader
+    ~index
+    ~on_header:t.add_object_on_header
+    ~on_payload:t.add_object_on_payload;
+  Zlib.Deflate.finalise t.pack_object_zlib_deflate
+;;
+
 let add_object_exn t ~object_file expected_sha1 =
   if Writer.is_closed t.writer
   then failwith "[add_object_exn] called on aborted pack writer";
@@ -110,6 +125,16 @@ let add_object_exn t ~object_file expected_sha1 =
     Monitor.try_with_or_error ~extract_exn:true (fun () ->
       add_object_exn t ~object_file expected_sha1)
   with
+  | Ok () -> Deferred.unit
+  | Error _ as error ->
+    let%map abort_result = abort t in
+    ok_exn (Or_error.combine_errors_unit [ error; abort_result ])
+;;
+
+let add_object_from_pack_exn t pack_reader ~index =
+  if Writer.is_closed t.writer
+  then failwith "[add_object_from_pack_exn] called on aborted pack writer";
+  match Or_error.try_with (fun () -> add_object_from_pack_exn t pack_reader ~index) with
   | Ok () -> Deferred.unit
   | Error _ as error ->
     let%map abort_result = abort t in
