@@ -25,8 +25,7 @@ type 'Sha1_validation t =
   ; writer : Writer.t
   ; mutable items_in_pack : int
   ; pack_object_zlib_deflate : Zlib.Deflate.t
-  ; raw_object_parser : 'Sha1_validation Object_parser.Raw.t
-  ; raw_object_zlib_inflate : Zlib.Inflate.t
+  ; raw_object_reader : 'Sha1_validation Object_reader.Raw.t
   }
 
 let write_object_type_and_length writer (object_type : Object_type.t) ~size =
@@ -71,27 +70,21 @@ let create ~pack_directory sha1_validation =
     Zlib.Deflate.create_uninitialised ~on_data_chunk:(fun buf ~pos ~len ->
       Writer.write_bigstring writer buf ~pos ~len)
   in
-  let raw_object_parser =
-    Object_parser.Raw.create
-      ~on_header:(fun object_type ~size ->
-        write_object_type_and_length writer object_type ~size)
-      ~on_payload_chunk:(fun buf ~pos ~len ~final:_ ->
-        Zlib.Deflate.process pack_object_zlib_deflate buf ~pos ~len;
-        len)
-      ~on_error:Error.raise
-      sha1_validation
+  let on_header object_type ~size =
+    write_object_type_and_length writer object_type ~size
   in
-  let raw_object_zlib_inflate =
-    Zlib.Inflate.create_uninitialised ~on_data_chunk:(fun buf ~pos ~len ->
-      Object_parser.Raw.append_data raw_object_parser buf ~pos ~len)
+  let on_payload buf ~pos ~len =
+    Zlib.Deflate.process pack_object_zlib_deflate buf ~pos ~len
+  in
+  let raw_object_reader =
+    Object_reader.Raw.create ~on_header ~on_payload ~on_error:Error.raise sha1_validation
   in
   { pack_directory
   ; temp_file_name
   ; writer
   ; items_in_pack = 0
   ; pack_object_zlib_deflate
-  ; raw_object_parser
-  ; raw_object_zlib_inflate
+  ; raw_object_reader
   }
 ;;
 
@@ -104,21 +97,10 @@ let abort t =
 let add_object_exn t ~object_file expected_sha1 =
   t.items_in_pack <- t.items_in_pack + 1;
   Zlib.Deflate.init_or_reset t.pack_object_zlib_deflate;
-  Object_parser.Raw.reset t.raw_object_parser;
-  Zlib.Inflate.init_or_reset t.raw_object_zlib_inflate;
-  match%map
-    Reader.with_file object_file ~f:(fun reader ->
-      Reader.read_one_chunk_at_a_time reader ~handle_chunk:(fun buf ~pos ~len ->
-        let consumed = Zlib.Inflate.process t.raw_object_zlib_inflate buf ~pos ~len in
-        if consumed <> len then return (`Stop ()) else return `Continue))
-  with
-  | `Eof ->
-    Zlib.Inflate.finalise t.raw_object_zlib_inflate;
-    Object_parser.Raw.finalise t.raw_object_parser expected_sha1;
-    Zlib.Deflate.finalise t.pack_object_zlib_deflate
-  | `Eof_with_unconsumed_data _ ->
-    failwith "Reader left unconsumed input, should be impossible"
-  | `Stopped () -> failwith "Unexpected extra data at the end of git object file"
+  let%map () =
+    Object_reader.Raw.read_file t.raw_object_reader ~file:object_file expected_sha1
+  in
+  Zlib.Deflate.finalise t.pack_object_zlib_deflate
 ;;
 
 let add_object_exn t ~object_file expected_sha1 =

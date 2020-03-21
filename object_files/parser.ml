@@ -92,8 +92,8 @@ module Raw_kernel = struct
     ; mutable len : int
     ; mutable total_payload_read : int
     ; state : State.t
-    ; on_header : Object_type.t -> size:int -> unit
-    ; on_payload_chunk : Bigstring.t -> pos:int -> len:int -> final:bool -> int
+    ; mutable on_header : Object_type.t -> size:int -> unit
+    ; mutable on_payload_chunk : Bigstring.t -> pos:int -> len:int -> final:bool -> int
     ; on_error : Error.t -> unit
     }
   [@@deriving fields]
@@ -359,6 +359,12 @@ module Raw = struct
         Sha1.Compute.init_or_reset sha1_context
       in
       Raw_kernel.reset raw_kernel
+  ;;
+
+  let set_on_header t on_header = Raw_kernel.set_on_header (raw_kernel t) on_header
+
+  let set_on_payload_chunk t on_payload_chunk =
+    Raw_kernel.set_on_payload_chunk (raw_kernel t) on_payload_chunk
   ;;
 
   module Feed_sha1_context_header_data_function = struct

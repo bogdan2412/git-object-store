@@ -19,11 +19,63 @@ open! Core
 open! Async
 open! Import
 
-type 'Sha1_validation t =
-  { parser : 'Sha1_validation Parser.t
-  ; zlib_inflate : Zlib.Inflate.t
-  ; on_error : Error.t -> unit
-  }
+module type Parser = sig
+  type _ t
+
+  val append_data : _ t -> Bigstring.t -> pos:int -> len:int -> unit
+  val finalise : 'Sha1_validation t -> 'Sha1_validation -> unit
+  val reset : _ t -> unit
+end
+
+module Make (Parser : Parser) = struct
+  type 'Sha1_validation t =
+    { parser : 'Sha1_validation Parser.t
+    ; zlib_inflate : Zlib.Inflate.t
+    ; on_error : Error.t -> unit
+    }
+
+  let create parser ~on_error =
+    let zlib_inflate =
+      Zlib.Inflate.create_uninitialised ~on_data_chunk:(Parser.append_data parser)
+    in
+    { parser; zlib_inflate; on_error }
+  ;;
+
+  let read_file' t ~file ~push_back expected_sha1 =
+    Parser.reset t.parser;
+    Zlib.Inflate.init_or_reset t.zlib_inflate;
+    match%map
+      Reader.with_file file ~f:(fun reader ->
+        Reader.read_one_chunk_at_a_time reader ~handle_chunk:(fun buf ~pos ~len ->
+          let consumed = Zlib.Inflate.process t.zlib_inflate buf ~pos ~len in
+          if consumed <> len
+          then
+            return
+              (`Stop_consumed
+                 ( Or_error.error_string
+                     "Unexpected extra data at the end of git object file"
+                 , consumed ))
+          else (
+            match%map push_back () with
+            | `Ok -> `Continue
+            | `Reader_closed -> `Stop (Ok ()))))
+    with
+    | `Eof ->
+      Or_error.try_with (fun () ->
+        Zlib.Inflate.finalise t.zlib_inflate;
+        Parser.finalise t.parser expected_sha1)
+      |> Or_error.iter_error ~f:t.on_error
+    | `Eof_with_unconsumed_data _ ->
+      failwith "Reader left unconsumed input, should be impossible"
+    | `Stopped or_error -> Or_error.iter_error or_error ~f:t.on_error
+  ;;
+
+  let read_file t ~file expected_sha1 =
+    read_file' t ~file ~push_back:(Fn.const (return `Ok)) expected_sha1
+  ;;
+end
+
+include Make (Parser)
 
 let create
       ~on_blob_size
@@ -44,49 +96,49 @@ let create
       ~on_error
       sha1_validation
   in
-  let zlib_inflate =
-    Zlib.Inflate.create_uninitialised ~on_data_chunk:(Parser.append_data parser)
-  in
-  { parser; zlib_inflate; on_error }
-;;
-
-let read_file' t ~file ~push_back expected_sha1 =
-  Parser.reset t.parser;
-  Zlib.Inflate.init_or_reset t.zlib_inflate;
-  match%map
-    Reader.with_file file ~f:(fun reader ->
-      Reader.read_one_chunk_at_a_time reader ~handle_chunk:(fun buf ~pos ~len ->
-        let consumed = Zlib.Inflate.process t.zlib_inflate buf ~pos ~len in
-        if consumed <> len
-        then
-          return
-            (`Stop_consumed
-               ( Or_error.error_string
-                   "Unexpected extra data at the end of git object file"
-               , consumed ))
-        else (
-          match%map push_back () with
-          | `Ok -> `Continue
-          | `Reader_closed -> `Stop (Ok ()))))
-  with
-  | `Eof ->
-    Or_error.try_with (fun () ->
-      Zlib.Inflate.finalise t.zlib_inflate;
-      Parser.finalise t.parser expected_sha1)
-    |> Or_error.iter_error ~f:t.on_error
-  | `Eof_with_unconsumed_data _ ->
-    failwith "Reader left unconsumed input, should be impossible"
-  | `Stopped or_error -> Or_error.iter_error or_error ~f:t.on_error
-;;
-
-let read_file t ~file expected_sha1 =
-  read_file' t ~file ~push_back:(Fn.const (return `Ok)) expected_sha1
+  create parser ~on_error
 ;;
 
 let set_on_blob t ~on_size ~on_chunk = Parser.set_on_blob t.parser ~on_size ~on_chunk
 let set_on_commit t on_commit = Parser.set_on_commit t.parser on_commit
 let set_on_tree_line t on_tree_line = Parser.set_on_tree_line t.parser on_tree_line
 let set_on_tag t on_tag = Parser.set_on_tag t.parser on_tag
+
+module Raw = struct
+  module Base = Make (Parser.Raw)
+
+  type 'Sha1_validation t =
+    { base : 'Sha1_validation Base.t
+    ; mutable on_payload : Bigstring.t -> pos:int -> len:int -> unit
+    }
+
+  let create ~on_header ~on_payload ~on_error sha1_validation =
+    let rec t = lazy { base = force base; on_payload }
+    and base =
+      lazy
+        (let parser =
+           Parser.Raw.create
+             ~on_header
+             ~on_payload_chunk:(fun buf ~pos ~len ~final:_ ->
+               (force t).on_payload buf ~pos ~len;
+               len)
+             ~on_error
+             sha1_validation
+         in
+         Base.create parser ~on_error)
+    in
+    force t
+  ;;
+
+  let read_file t ~file sha1_validation = Base.read_file t.base ~file sha1_validation
+
+  let read_file' t ~file ~push_back sha1_validation =
+    Base.read_file' t.base ~file ~push_back sha1_validation
+  ;;
+
+  let set_on_header t on_header = Parser.Raw.set_on_header t.base.parser on_header
+  let set_on_payload t on_payload = t.on_payload <- on_payload
+end
 
 module Expect_test_helpers = struct
   let with_temp_dir = Expect_test_helpers.with_temp_dir

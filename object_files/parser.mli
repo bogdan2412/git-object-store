@@ -118,4 +118,13 @@ module Raw : sig
   val append_data : _ t -> Bigstring.t -> pos:int -> len:int -> unit
   val finalise : 'Sha1_validation t -> 'Sha1_validation -> unit
   val reset : _ t -> unit
+
+  (** Change the callback that gets called after parsing the raw object header. *)
+  val set_on_header : _ t -> (Object_type.t -> size:int -> unit) -> unit
+
+  (** Change the callback that gets called on each raw payload chunk. *)
+  val set_on_payload_chunk
+    :  _ t
+    -> (Bigstring.t -> pos:int -> len:int -> final:bool -> int)
+    -> unit
 end

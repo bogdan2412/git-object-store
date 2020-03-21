@@ -4,6 +4,7 @@ module Expect_test_time_zone = Git_core_types.Expect_test_time_zone
 module File_mode = Git_core_types.File_mode
 module Object_header_writer = Git_object_files.Header_writer
 module Object_parser = Git_object_files.Parser
+module Object_reader = Git_object_files.Reader
 module Object_type = Git_core_types.Object_type
 module Sha1 = Git_bindings_sha1
 module Sha1_validation = Git_core_types.Sha1_validation

@@ -21,8 +21,8 @@ open! Import
 
 type _ t
 
-(** [create] returns a new reader that can be used for reading for parsing
-    multiple git object files from disk.
+(** [create] returns a new reader that can be used for reading multiple git object files
+    from disk.
 
     If [Validate_sha1] is passed, then the [read_file] methods will expect a [Sha1.Hex.t]
     to be passed in and the reader will assert that the passed in data matches the
@@ -43,7 +43,7 @@ val create
     relevant callbacks out of those specified in [create]. *)
 val read_file : 'Sha1_validation t -> file:string -> 'Sha1_validation -> unit Deferred.t
 
-(** [read_file] reads the given git object file from disk and calls the
+(** [read_file'] reads the given git object file from disk and calls the
     relevant callbacks out of those specified in [create]. The [push_back]
     callback is called every time we read a chunk of data from the file
     and it gives the client an opportunity to push back on reading. *)
@@ -72,6 +72,46 @@ val set_on_tree_line
 
 (** Change the callback that gets called while parsing [tag] objects. *)
 val set_on_tag : _ t -> (Tag.t -> unit) -> unit
+
+module Raw : sig
+  type _ t
+
+  (** [create] returns a new raw reader that can be used for reading multiple git object
+      files from disk.
+
+      If [Validate_sha1] is passed, then the [read_file] methods will expect a [Sha1.Hex.t]
+      to be passed in and the reader will assert that the passed in data matches the
+      checksum provided.  Otherwise, if [Do_not_validate_sha1] is passed, [read_file] only
+      expects a [unit] argument and does not spend time maintaining the [Sha1] sum of the
+      data. *)
+  val create
+    :  on_header:(Object_type.t -> size:int -> unit)
+    -> on_payload:(Bigstring.t -> pos:int -> len:int -> unit)
+    -> on_error:(Error.t -> unit)
+    -> 'Sha1_validation Sha1_validation.t
+    -> 'Sha1_validation t
+
+  (** [read_file] reads the given git object file from disk and calls the
+      relevant callbacks out of those specified in [create]. *)
+  val read_file : 'Sha1_validation t -> file:string -> 'Sha1_validation -> unit Deferred.t
+
+  (** [read_file'] reads the given git object file from disk and calls the
+      relevant callbacks out of those specified in [create]. The [push_back]
+      callback is called every time we read a chunk of data from the file
+      and it gives the client an opportunity to push back on reading. *)
+  val read_file'
+    :  'Sha1_validation t
+    -> file:string
+    -> push_back:(unit -> [ `Ok | `Reader_closed ] Deferred.t)
+    -> 'Sha1_validation
+    -> unit Deferred.t
+
+  (** Change the callback that gets called after parsing the raw object header. *)
+  val set_on_header : _ t -> (Object_type.t -> size:int -> unit) -> unit
+
+  (** Change the callback that gets called on each raw payload chunk. *)
+  val set_on_payload : _ t -> (Bigstring.t -> pos:int -> len:int -> unit) -> unit
+end
 
 module Expect_test_helpers : sig
   val blob_reader : 'Sha1_validation Sha1_validation.t -> 'Sha1_validation t
