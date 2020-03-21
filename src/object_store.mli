@@ -38,6 +38,29 @@ val create
 
 val object_directory : _ t -> string
 
+module Find_result : sig
+  module Volatile : sig
+    (** Do not keep references to instances of this type as they will be mutated
+        on every call to [find_object]. *)
+    type 'Sha1_validation t = private
+      | In_pack_file of
+          { mutable pack : 'Sha1_validation Pack_reader.t
+          ; mutable index : int
+          }
+      | Unpacked_file_if_exists of { mutable path : string }
+      (** [Unpacked_file_if_exists] does not verify that the path exists, it
+          merely implies that the file is not present in any pack file. *)
+  end
+end
+
+(** [find_object] returns whether the object with the given SHA1 exists in a pack
+    file or should be read from an unpacked file (assuming it exists at all, the
+    method does not check that this is the case). *)
+val find_object
+  :  'Sha1_validation t
+  -> Sha1.Hex.t
+  -> 'Sha1_validation Find_result.Volatile.t
+
 (** [read_object] reads an object with the given SHA1 hash and calls the relevant callbacks
     depending on the kind of object.
 
@@ -104,7 +127,8 @@ end
 val all_objects_in_store : _ t -> Object_location.t list Sha1.Hex.Table.t Deferred.t
 
 module Packed : sig
-  type t
+  type _ non_packed
+  type t = T : _ non_packed -> t
 
   (** Create a unified reader that reads from the given [object_directory].
       [max_concurrent_reads] throttles how many objects may be read from disk at the same time.
@@ -177,3 +201,4 @@ module Packed : sig
 
   val all_objects_in_store : t -> Object_location.t list Sha1.Hex.Table.t Deferred.t
 end
+with type 'a non_packed := 'a t

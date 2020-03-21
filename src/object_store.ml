@@ -80,6 +80,99 @@ let create ~object_directory ~max_concurrent_reads sha1_validation =
 
 let object_directory t = t.object_directory
 
+module Find_result : sig
+  module Volatile : sig
+    (** Do not keep references to instances of this type as they will be mutated
+        on every call to [find_object]. *)
+    type 'Sha1_validation t = private
+      | In_pack_file of
+          { mutable pack : 'Sha1_validation Pack_reader.t
+          ; mutable index : int
+          }
+      | Unpacked_file_if_exists of { mutable path : string }
+
+    val in_pack_file
+      :  'Sha1_validation Sha1_validation.t
+      -> 'Sha1_validation Pack_reader.t
+      -> index:int
+      -> 'Sha1_validation t
+
+    val unpacked_file_if_exists
+      :  'Sha1_validation Sha1_validation.t
+      -> string
+      -> 'Sha1_validation t
+  end
+end = struct
+  module Volatile = struct
+    type 'Sha1_validation t =
+      | In_pack_file of
+          { mutable pack : 'Sha1_validation Pack_reader.t
+          ; mutable index : int
+          }
+      | Unpacked_file_if_exists of { mutable path : string }
+
+    let unit_in_pack_file : unit Pack_reader.t -> index:int -> unit t =
+      let value = In_pack_file { pack = Obj.magic (); index = 0 } in
+      fun pack ~index ->
+        (match value with
+         | In_pack_file record ->
+           record.pack <- pack;
+           record.index <- index
+         | _ -> assert false);
+        value
+    ;;
+
+    let sha1_in_pack_file : Sha1.Hex.t Pack_reader.t -> index:int -> Sha1.Hex.t t =
+      let value = In_pack_file { pack = Obj.magic (); index = 0 } in
+      fun pack ~index ->
+        (match value with
+         | In_pack_file record ->
+           record.pack <- pack;
+           record.index <- index
+         | _ -> assert false);
+        value
+    ;;
+
+    let in_pack_file
+          (type a)
+          (sha1_validation : a Sha1_validation.t)
+          (pack : a Pack_reader.t)
+          ~index
+      : a t
+      =
+      match sha1_validation with
+      | Do_not_validate_sha1 -> unit_in_pack_file pack ~index
+      | Validate_sha1 -> sha1_in_pack_file pack ~index
+    ;;
+
+    let unit_unpacked_file_if_exists : string -> unit t =
+      let value = Unpacked_file_if_exists { path = "" } in
+      fun path ->
+        (match value with
+         | Unpacked_file_if_exists record -> record.path <- path
+         | _ -> assert false);
+        value
+    ;;
+
+    let sha1_unpacked_file_if_exists : string -> Sha1.Hex.t t =
+      let value = Unpacked_file_if_exists { path = "" } in
+      fun path ->
+        (match value with
+         | Unpacked_file_if_exists record -> record.path <- path
+         | _ -> assert false);
+        value
+    ;;
+
+    let unpacked_file_if_exists (type a) (sha1_validation : a Sha1_validation.t) path
+      : a t
+      =
+      match sha1_validation with
+      | Do_not_validate_sha1 -> unit_unpacked_file_if_exists path
+      | Validate_sha1 -> sha1_unpacked_file_if_exists path
+    ;;
+  end
+end
+
 let unpacked_disk_path t sha1 =
   let sha1_string = Sha1.Hex.to_string sha1 in
   Filename.concat
@@ -87,10 +180,27 @@ let unpacked_disk_path t sha1 =
     (String.sub sha1_string ~pos:2 ~len:(Sha1.Hex.length - 2))
 ;;
 
+let find_object =
+  let rec loop_packs t sha1 packs =
+    match packs with
+    | [] ->
+      let path = unpacked_disk_path t sha1 in
+      Find_result.Volatile.unpacked_file_if_exists t.sha1_validation path
+    | (_, pack) :: packs ->
+      (match Pack_reader.find_sha1_index' pack t.sha1_buf with
+       | None -> loop_packs t sha1 packs
+       | Some { index } -> Find_result.Volatile.in_pack_file t.sha1_validation pack ~index)
+  in
+  fun t sha1 ->
+    Sha1.Raw.Volatile.of_hex sha1 t.sha1_buf;
+    loop_packs t sha1 t.packs
+;;
+
 let read_object_from_unpacked_file
       (type a)
       (t : a t)
-      sha1
+      (sha1 : Sha1.Hex.t)
+      path
       ~on_blob_size
       ~on_blob_chunk
       ~on_commit
@@ -106,7 +216,6 @@ let read_object_from_unpacked_file
     Object_reader.set_on_commit object_reader on_commit;
     Object_reader.set_on_tree_line object_reader on_tree_line;
     Object_reader.set_on_tag object_reader on_tag;
-    let path = unpacked_disk_path t sha1 in
     Object_reader.read_file'
       object_reader
       ~file:path
@@ -116,21 +225,9 @@ let read_object_from_unpacked_file
        | Validate_sha1 -> sha1))
 ;;
 
-let read_object =
-  let rec loop_packs
-    : type a.
-      a t
-      -> Sha1.Hex.t
-      -> on_blob_size:(int -> unit)
-      -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
-      -> on_commit:(Commit.t -> unit)
-      -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
-      -> on_tag:(Tag.t -> unit)
-      -> push_back:(unit -> [ `Ok | `Reader_closed ] Deferred.t)
-      -> (string * a Pack_reader.t) list
-      -> unit Deferred.t
-    =
-    fun t
+let read_object
+      (type a)
+      (t : a t)
       sha1
       ~on_blob_size
       ~on_blob_chunk
@@ -138,54 +235,32 @@ let read_object =
       ~on_tree_line
       ~on_tag
       ~push_back
-      packs ->
-      match packs with
-      | [] ->
-        read_object_from_unpacked_file
-          t
-          sha1
-          ~on_blob_size
-          ~on_blob_chunk
-          ~on_commit
-          ~on_tree_line
-          ~on_tag
-          ~push_back
-      | (_, pack) :: packs ->
-        (match Pack_reader.find_sha1_index' pack t.sha1_buf with
-         | None ->
-           loop_packs
-             t
-             sha1
-             ~on_blob_size
-             ~on_blob_chunk
-             ~on_commit
-             ~on_tree_line
-             ~on_tag
-             ~push_back
-             packs
-         | Some { index } ->
-           Pack_reader.read_object
-             pack
-             ~index
-             ~on_blob_size
-             ~on_blob_chunk
-             ~on_commit
-             ~on_tree_line
-             ~on_tag;
-           Deferred.unit)
-  in
-  fun t sha1 ~on_blob_size ~on_blob_chunk ~on_commit ~on_tree_line ~on_tag ~push_back ->
-    Sha1.Raw.Volatile.of_hex sha1 t.sha1_buf;
-    loop_packs
-      t
-      sha1
+  =
+  match find_object t sha1 with
+  | In_pack_file { pack; index } ->
+    Pack_reader.read_object
+      pack
+      ~index
       ~on_blob_size
       ~on_blob_chunk
       ~on_commit
       ~on_tree_line
-      ~on_tag
-      ~push_back
-      t.packs
+      ~on_tag;
+    Deferred.unit
+  | Unpacked_file_if_exists { path } ->
+    (match%bind Sys.is_file_exn path with
+     | false -> raise_s [%message "Object does not exist" (sha1 : Sha1.Hex.t)]
+     | true ->
+       read_object_from_unpacked_file
+         t
+         sha1
+         path
+         ~on_blob_size
+         ~on_blob_chunk
+         ~on_commit
+         ~on_tree_line
+         ~on_tag
+         ~push_back)
 ;;
 
 let read_blob t sha1 ~on_size ~on_chunk ~push_back =
@@ -339,13 +414,13 @@ module Packed = struct
 
   let create ~object_directory ~max_concurrent_reads sha1_validation =
     create ~object_directory ~max_concurrent_reads sha1_validation
-    >>|? fun unified_store -> T unified_store
+    >>|? fun object_store -> T object_store
   ;;
 
-  let object_directory (T unified_store) = object_directory unified_store
+  let object_directory (T object_store) = object_directory object_store
 
   let read_object
-        (T unified_store)
+        (T object_store)
         sha1
         ~on_blob_size
         ~on_blob_chunk
@@ -355,7 +430,7 @@ module Packed = struct
         ~push_back
     =
     read_object
-      unified_store
+      object_store
       sha1
       ~on_blob_size
       ~on_blob_chunk
@@ -365,25 +440,22 @@ module Packed = struct
       ~push_back
   ;;
 
-  let read_blob (T unified_store) sha1 ~on_size ~on_chunk ~push_back =
-    read_blob unified_store sha1 ~on_size ~on_chunk ~push_back
+  let read_blob (T object_store) sha1 ~on_size ~on_chunk ~push_back =
+    read_blob object_store sha1 ~on_size ~on_chunk ~push_back
   ;;
 
-  let read_commit (T unified_store) sha1 ~on_commit =
-    read_commit unified_store sha1 ~on_commit
+  let read_commit (T object_store) sha1 ~on_commit =
+    read_commit object_store sha1 ~on_commit
   ;;
 
-  let read_tree (T unified_store) sha1 ~on_tree_line =
-    read_tree unified_store sha1 ~on_tree_line
+  let read_tree (T object_store) sha1 ~on_tree_line =
+    read_tree object_store sha1 ~on_tree_line
   ;;
 
-  let read_tag (T unified_store) sha1 ~on_tag = read_tag unified_store sha1 ~on_tag
-
-  let with_on_disk_file (T unified_store) sha1 ~f =
-    with_on_disk_file unified_store sha1 ~f
-  ;;
+  let read_tag (T object_store) sha1 ~on_tag = read_tag object_store sha1 ~on_tag
+  let with_on_disk_file (T object_store) sha1 ~f = with_on_disk_file object_store sha1 ~f
 
   module Object_location = Object_location
 
-  let all_objects_in_store (T unified_store) = all_objects_in_store unified_store
+  let all_objects_in_store (T object_store) = all_objects_in_store object_store
 end
