@@ -12,4 +12,5 @@ module Sha1 = Git_core_types.Sha1
 module Sha1_validation = Git_core_types.Sha1_validation
 module Tag = Git_core_types.Tag
 module Tree = Git_core_types.Tree
+module Tree_cache = Git_tree_cache
 module Util = Util
