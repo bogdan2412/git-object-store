@@ -7,6 +7,7 @@
   git_core_types
   git_object_files
   git_object_store
-  git_pack_files)
+  git_pack_files
+  git_tree_cache)
  (inline_tests)
  (preprocess (pps ppx_jane)))
