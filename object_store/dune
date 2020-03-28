@@ -1,12 +1,11 @@
 (library
- (name git)
- (public_name git)
+ (name git_object_store)
+ (public_name git.object_store)
  (libraries
   async
   core
   git_core_types
   git_object_files
-  git_object_store
   git_pack_files)
  (inline_tests)
  (preprocess (pps ppx_jane)))

@@ -1,5 +1,4 @@
 open! Core
-open! Import
 
 (** Adds an optional [-git-objects-directory] flag pointing to a repository's
     [.git/objects/] directory.  If the flag is not specified, then we try to infer the
