@@ -79,6 +79,21 @@ val read_object
   -> push_back:(unit -> [ `Ok | `Reader_closed ] Deferred.t)
   -> unit Deferred.t
 
+(** [read_raw_object] reads a raw object with the given SHA1 hash and calls the provided
+    callbacks.
+
+    Raises if no object with the given hash exists.
+
+    The [push_back] callback is called every time we read a chunk of data and it gives the
+    client an opportunity to push back on reading. *)
+val read_raw_object
+  :  _ t
+  -> Sha1.Hex.t
+  -> on_header:(Object_type.t -> size:int -> unit)
+  -> on_payload:(Bigstring.t -> pos:int -> len:int -> unit)
+  -> push_back:(unit -> [ `Ok | `Reader_closed ] Deferred.t)
+  -> unit Deferred.t
+
 (** [read_blob] is a convenience wrapper on top of [read_object] that raises if the type of
     object is not Blob. *)
 val read_blob
@@ -104,6 +119,10 @@ val read_tree
 (** [read_tag] is a convenience wrapper on top of [read_object] that raises if the type of
     object is not Tag. *)
 val read_tag : _ t -> Sha1.Hex.t -> on_tag:(Tag.t -> unit) -> unit Deferred.t
+
+(** [size] returns the size of the object identified by the provided SHA1. Raises if
+    the object does not exist. *)
+val size : _ t -> Sha1.Hex.t -> int Deferred.t
 
 (** Looks for an object with the given SHA1 hash and calls [f] with an on-disk file containing
     the object.
@@ -162,6 +181,21 @@ module Packed : sig
     -> push_back:(unit -> [ `Ok | `Reader_closed ] Deferred.t)
     -> unit Deferred.t
 
+  (** [read_raw_object] reads a raw object with the given SHA1 hash and calls the provided
+      callbacks.
+
+      Raises if no object with the given hash exists.
+
+      The [push_back] callback is called every time we read a chunk of data and it gives the
+      client an opportunity to push back on reading. *)
+  val read_raw_object
+    :  t
+    -> Sha1.Hex.t
+    -> on_header:(Object_type.t -> size:int -> unit)
+    -> on_payload:(Bigstring.t -> pos:int -> len:int -> unit)
+    -> push_back:(unit -> [ `Ok | `Reader_closed ] Deferred.t)
+    -> unit Deferred.t
+
   (** [read_blob] is a convenience wrapper on top of [read_object] that raises if the type of
       object is not Blob. *)
   val read_blob
@@ -187,6 +221,10 @@ module Packed : sig
   (** [read_tag] is a convenience wrapper on top of [read_object] that raises if the type of
       object is not Tag. *)
   val read_tag : t -> Sha1.Hex.t -> on_tag:(Tag.t -> unit) -> unit Deferred.t
+
+  (** [size] returns the size of the object identified by the provided SHA1. Raises if
+      the object does not exist. *)
+  val size : t -> Sha1.Hex.t -> int Deferred.t
 
   (** Looks for an object with the given SHA1 hash and calls [f] with an on-disk file containing
       the object.

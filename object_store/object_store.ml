@@ -23,7 +23,8 @@ type 'Sha1_validation t =
   { object_directory : string
   ; packs : (string * 'Sha1_validation Pack_reader.t) list
   ; sha1_buf : Sha1.Raw.Volatile.t
-  ; read_throttle : 'Sha1_validation Object_reader.t Throttle.t
+  ; read_throttle :
+      ('Sha1_validation Object_reader.t * 'Sha1_validation Object_reader.Raw.t) Throttle.t
   ; sha1_validation : 'Sha1_validation Sha1_validation.t
   }
 
@@ -40,6 +41,14 @@ let unexpected_tree_line (_ : File_mode.t) (_ : Sha1.Raw.Volatile.t) ~name:(_ : 
 ;;
 
 let unexpected_tag (_ : Tag.t) = failwith "Unexpected tag object"
+
+let unexpected_raw_header (_ : Object_type.t) ~size:(_ : int) =
+  failwith "Unexpected raw header"
+;;
+
+let unexpected_raw_payload (_ : Bigstring.t) ~pos:(_ : int) ~len:(_ : int) =
+  failwith "Unexpected raw payload chunk"
+;;
 
 let create ~object_directory ~max_concurrent_reads sha1_validation =
   let open Deferred.Or_error.Let_syntax in
@@ -61,14 +70,19 @@ let create ~object_directory ~max_concurrent_reads sha1_validation =
     Throttle.create_with
       ~continue_on_error:true
       (List.init max_concurrent_reads ~f:(fun (_ : int) ->
-         Object_reader.create
-           ~on_blob_size:unexpected_blob_size
-           ~on_blob_chunk:unexpected_blob_chunk
-           ~on_commit:unexpected_commit
-           ~on_tree_line:unexpected_tree_line
-           ~on_tag:unexpected_tag
-           ~on_error:Error.raise
-           sha1_validation))
+         ( Object_reader.create
+             ~on_blob_size:unexpected_blob_size
+             ~on_blob_chunk:unexpected_blob_chunk
+             ~on_commit:unexpected_commit
+             ~on_tree_line:unexpected_tree_line
+             ~on_tag:unexpected_tag
+             ~on_error:Error.raise
+             sha1_validation
+         , Object_reader.Raw.create
+             ~on_header:unexpected_raw_header
+             ~on_payload:unexpected_raw_payload
+             ~on_error:Error.raise
+             sha1_validation )))
   in
   { object_directory
   ; packs
@@ -208,7 +222,7 @@ let read_object_from_unpacked_file
       ~on_tag
       ~push_back
   =
-  Throttle.enqueue t.read_throttle (fun object_reader ->
+  Throttle.enqueue t.read_throttle (fun (object_reader, _) ->
     Object_reader.set_on_blob
       object_reader
       ~on_size:on_blob_size
@@ -263,6 +277,39 @@ let read_object
          ~push_back)
 ;;
 
+let read_raw_object_from_unpacked_file
+      (type a)
+      (t : a t)
+      (sha1 : Sha1.Hex.t)
+      path
+      ~on_header
+      ~on_payload
+      ~push_back
+  =
+  Throttle.enqueue t.read_throttle (fun (_, object_raw_reader) ->
+    Object_reader.Raw.set_on_header object_raw_reader on_header;
+    Object_reader.Raw.set_on_payload object_raw_reader on_payload;
+    Object_reader.Raw.read_file'
+      object_raw_reader
+      ~file:path
+      ~push_back
+      (match t.sha1_validation with
+       | Do_not_validate_sha1 -> ()
+       | Validate_sha1 -> sha1))
+;;
+
+let read_raw_object (type a) (t : a t) sha1 ~on_header ~on_payload ~push_back =
+  match find_object t sha1 with
+  | In_pack_file { pack; index } ->
+    Pack_reader.read_raw_object pack ~index ~on_header ~on_payload;
+    Deferred.unit
+  | Unpacked_file_if_exists { path } ->
+    (match%bind Sys.is_file_exn path with
+     | false -> raise_s [%message "Object does not exist" (sha1 : Sha1.Hex.t)]
+     | true ->
+       read_raw_object_from_unpacked_file t sha1 path ~on_header ~on_payload ~push_back)
+;;
+
 let read_blob t sha1 ~on_size ~on_chunk ~push_back =
   read_object
     t
@@ -309,6 +356,32 @@ let read_tag t sha1 ~on_tag =
     ~on_tree_line:unexpected_tree_line
     ~on_tag
     ~push_back:(Fn.const (return `Ok))
+;;
+
+let size t sha1 =
+  match find_object t sha1 with
+  | In_pack_file { pack; index } ->
+    let { Pack_reader.Size.Volatile.size; delta_size = _; pack_size = _ } =
+      Pack_reader.size pack ~index
+    in
+    return size
+  | Unpacked_file_if_exists { path } ->
+    let returned_size = ref (-1) in
+    let%bind () =
+      read_raw_object_from_unpacked_file
+        t
+        sha1
+        path
+        ~on_header:(fun (_ : Object_type.t) ~size -> returned_size := size)
+        ~on_payload:(fun (_ : Bigstring.t) ~pos:(_ : int) ~len:(_ : int) -> ())
+        ~push_back:(fun () -> return `Reader_closed)
+    in
+    if !returned_size <= -1
+    then
+      raise_s
+        [%message
+          "BUG - negative size returned" (sha1 : Sha1.Hex.t) ~size:(!returned_size : int)]
+    else return !returned_size
 ;;
 
 let with_on_disk_file t sha1 ~f =
@@ -440,6 +513,10 @@ module Packed = struct
       ~push_back
   ;;
 
+  let read_raw_object (T object_store) sha1 ~on_header ~on_payload ~push_back =
+    read_raw_object object_store sha1 ~on_header ~on_payload ~push_back
+  ;;
+
   let read_blob (T object_store) sha1 ~on_size ~on_chunk ~push_back =
     read_blob object_store sha1 ~on_size ~on_chunk ~push_back
   ;;
@@ -453,6 +530,7 @@ module Packed = struct
   ;;
 
   let read_tag (T object_store) sha1 ~on_tag = read_tag object_store sha1 ~on_tag
+  let size (T object_store) sha1 = size object_store sha1
   let with_on_disk_file (T object_store) sha1 ~f = with_on_disk_file object_store sha1 ~f
 
   module Object_location = Object_location
