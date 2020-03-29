@@ -46,7 +46,10 @@ val create
   -> current_commit:Sha1.Hex.t option
   -> t Deferred.t
 
-(** Raises on empty [path]. *)
+(** Raises on empty [path] or on a path pointing to a directory.
+
+    Updating a file's timestamp will update the timestamp of all directories
+    on the path to it. *)
 val update_exn : t -> path:string list -> Time_ns.t -> unit
 
 (** Raises if path does not exist or if we cannot find a commit where the

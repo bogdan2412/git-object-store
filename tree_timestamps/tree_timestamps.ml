@@ -34,16 +34,25 @@ module Timestamp_tree = struct
   type t =
     { files : Time_ns.t String.Table.t
     ; directories : t String.Table.t
+    ; mutable timestamp : Time_ns.t
     }
 
-  let create () = { files = String.Table.create (); directories = String.Table.create () }
+  let create () =
+    { files = String.Table.create ()
+    ; directories = String.Table.create ()
+    ; timestamp = Time_ns.epoch
+    }
+  ;;
 
   let rec get_exn t = function
-    | [] -> failwith "Not a file"
-    | [ file ] -> Hashtbl.find_exn t.files file
-    | directory :: directories ->
-      let node = Hashtbl.find_exn t.directories directory in
-      get_exn node directories
+    | [] -> t.timestamp
+    | entry :: directories ->
+      (match Hashtbl.find_exn t.directories entry with
+       | exception exn ->
+         (match directories with
+          | [] -> Hashtbl.find_exn t.files entry
+          | _ :: _ -> raise exn)
+       | node -> get_exn node directories)
   ;;
 
   let get_exn t path =
@@ -54,11 +63,49 @@ module Timestamp_tree = struct
 
   let rec update_exn t path time =
     match path with
-    | [] -> failwith "Not a file"
-    | [ file ] -> Hashtbl.set t.files ~key:file ~data:time
+    | [] -> failwith "Path not pointing to a file"
+    | [ file ] ->
+      (match Hashtbl.find_exn t.directories file with
+       | exception _ ->
+         Hashtbl.set t.files ~key:file ~data:time;
+         t.timestamp <- Time_ns.max t.timestamp time
+       | (_ : t) -> failwith "Path not pointing to a file")
     | directory :: directories ->
-      let node = Hashtbl.find_or_add t.directories directory ~default:create in
-      update_exn node directories time
+      (match Hashtbl.find_exn t.files directory with
+       | exception _ ->
+         let node = Hashtbl.find_or_add t.directories directory ~default:create in
+         update_exn node directories time;
+         t.timestamp <- Time_ns.max t.timestamp time
+       | (_ : Time_ns.t) -> failwith "Path not pointing to a file")
+  ;;
+
+  let update_exn t path time =
+    match update_exn t path time with
+    | exception _ ->
+      raise_s
+        [%message "Path not pointing to a file" (path : string list) (time : Time_ns.t)]
+    | result -> result
+  ;;
+
+  let rec update_directory_exn t path time =
+    match path with
+    | [] -> t.timestamp <- time
+    | directory :: directories ->
+      (match Hashtbl.find_exn t.files directory with
+       | exception _ ->
+         let node = Hashtbl.find_or_add t.directories directory ~default:create in
+         update_directory_exn node directories time;
+         t.timestamp <- Time_ns.max t.timestamp time
+       | (_ : Time_ns.t) -> failwith "Path not pointing to a directory")
+  ;;
+
+  let update_directory_exn t path time =
+    match update_directory_exn t path time with
+    | exception _ ->
+      raise_s
+        [%message
+          "Path not pointing to a directory" (path : string list) (time : Time_ns.t)]
+    | result -> result
   ;;
 end
 
@@ -110,8 +157,17 @@ let last_change_time_exn t ~path ~current_sha1 =
     let in_tree tree =
       match%bind Tree_cache.Node.get_file t.tree_cache tree ~path with
       | Some { sha1 = tree_sha1; _ }
-        when [%compare.equal: Sha1.Hex.t] tree_sha1 current_sha1 -> return true
-      | Some _ | None -> return false
+        when [%compare.equal: Sha1.Hex.t] tree_sha1 current_sha1 ->
+        return `Present_as_file
+      | Some _ -> return `Wrong_sha1
+      | None ->
+        (match%bind Tree_cache.Node.get_node t.tree_cache tree ~path with
+         | Some node ->
+           (match%bind Tree_cache.Node.persist t.tree_cache node with
+            | tree_sha1 when [%compare.equal: Sha1.Hex.t] tree_sha1 current_sha1 ->
+              return `Present_as_directory
+            | _ -> return `Wrong_sha1)
+         | None -> return `Not_found)
     in
     let rec loop () =
       step := !step lsr 1;
@@ -121,8 +177,8 @@ let last_change_time_exn t ~path ~current_sha1 =
       then (
         let tree, _ = t.tree_history.(!pos + !step) in
         match%bind in_tree tree with
-        | true -> loop ()
-        | false ->
+        | `Present_as_file | `Present_as_directory -> loop ()
+        | `Wrong_sha1 | `Not_found ->
           pos := !pos + !step;
           loop ())
       else loop ()
@@ -132,13 +188,16 @@ let last_change_time_exn t ~path ~current_sha1 =
     then raise_s [%message "Unable to find path in tree" (path : string list)];
     let tree, time = t.tree_history.(pos) in
     (match%bind in_tree tree with
-     | false ->
+     | `Wrong_sha1 | `Not_found ->
        raise_s
          [%message
            "Unable to find path in tree with the provided SHA1"
              (path : string list)
              (current_sha1 : Sha1.Hex.t)]
-     | true ->
-       update_exn t ~path time;
+     | `Present_as_file ->
+       Timestamp_tree.update_exn t.last_change_time path time;
+       return time
+     | `Present_as_directory ->
+       Timestamp_tree.update_directory_exn t.last_change_time path time;
        return time)
 ;;
