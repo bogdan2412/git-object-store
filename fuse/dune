@@ -1,0 +1,10 @@
+(executables
+ (names git_fuse)
+ (public_names git-fuse)
+ (package git_fuse)
+ (libraries
+  async
+  core
+  git
+  ocamlfuse)
+ (preprocess (pps ppx_jane)))
