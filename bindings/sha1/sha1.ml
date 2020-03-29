@@ -28,14 +28,15 @@ module Hex = struct
       then
         raise_s
           [%message
-            "Expected string of different length"
+            "Sha1.Hex.of_string expected string of different length"
               ~expected_length:(length : int)
               ~actual_length:(String.length string : int)];
       if not
            (String.for_all string ~f:(fun char ->
               Char.between char ~low:'0' ~high:'9'
               || Char.between char ~low:'a' ~high:'f'))
-      then failwith "Expected string made only out of characters [0-9a-f]";
+      then
+        failwith "Sha1.Hex.of_string expected string made only out of characters [0-9a-f]";
       string
     ;;
 
@@ -81,7 +82,7 @@ module Raw = struct
       then
         raise_s
           [%message
-            "Expected string of different length"
+            "Sha1.Raw.of_string expected string of different length"
               ~expected_length:(length : int)
               ~actual_length:(String.length string : int)];
       string

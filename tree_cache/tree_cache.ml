@@ -19,6 +19,22 @@ open! Core
 open! Async
 open! Import
 
+module File = struct
+  module Kind = struct
+    type t =
+      | Regular_file
+      | Executable_file
+      | Link
+    [@@deriving compare, sexp_of]
+  end
+
+  type t =
+    { sha1 : Sha1.Hex.t
+    ; kind : Kind.t
+    }
+  [@@deriving compare, sexp_of]
+end
+
 module Node0 = struct
   type _ state =
     | Not_loaded : Sha1.Hex.t -> [ `Not_loaded ] state
@@ -26,12 +42,12 @@ module Node0 = struct
     | Loaded_and_persisted :
         { sha1 : Sha1.Hex.t
         ; directories : t String.Map.t
-        ; files : Sha1.Hex.t String.Map.t
+        ; files : File.t String.Map.t
         }
         -> [ `Loaded ] state
     | Loaded_and_not_persisted :
         { directories : t String.Map.t
-        ; files : Sha1.Hex.t String.Map.t
+        ; files : File.t String.Map.t
         }
         -> [ `Loaded ] state
 
@@ -113,23 +129,35 @@ module Node = struct
             Object_store.Packed.read_tree
               t.object_store
               sha1
-              ~on_tree_line:(fun mode sha1 ~name ->
+              ~on_tree_line:(fun mode entry_sha1 ~name ->
+                let entry_sha1 = Sha1.Raw.Volatile.to_hex entry_sha1 in
                 match mode with
-                | Non_executable_file ->
-                  files
-                  := Map.add_exn
-                       !files
-                       ~key:name
-                       ~data:(Sha1.Raw.Volatile.to_hex sha1)
+                | Non_executable_file | Executable_file | Link ->
+                  let file =
+                    { File.sha1 = entry_sha1
+                    ; kind =
+                        (match mode with
+                         | Non_executable_file -> Regular_file
+                         | Executable_file -> Executable_file
+                         | Link -> Link
+                         | Directory | Git_submodule ->
+                           raise_s
+                             [%message "Compiler BUG - impossible match variant" [%here]])
+                    }
+                  in
+                  files := Map.add_exn !files ~key:name ~data:file
                 | Directory ->
                   directories
                   := Map.add_exn
                        !directories
                        ~key:name
-                       ~data:
-                         { state = T (Not_loaded (Sha1.Raw.Volatile.to_hex sha1)) }
-                | Executable_file | Link | Git_submodule ->
-                  failwith "Read tree line with unexpected file mode")
+                       ~data:{ state = T (Not_loaded entry_sha1) }
+                | Git_submodule ->
+                  Log.Global.error_s
+                    [%message
+                      "Git submodules are not supported by tree cache"
+                        (sha1 : Sha1.Hex.t)
+                        (name : string)])
           in
           Loaded_and_persisted { sha1; files = !files; directories = !directories })
       in
@@ -169,11 +197,14 @@ module Node = struct
       List.iter directory_sha1s ~f:(fun (directory, sha1) ->
         Sha1.Raw.Volatile.of_hex sha1 sha1_raw;
         Tree_writer.write_tree_line' git_tree_writer Directory sha1_raw ~name:directory);
-      Map.iteri files ~f:(fun ~key:file ~data:sha1 ->
+      Map.iteri files ~f:(fun ~key:file ~data:{ sha1; kind } ->
         Sha1.Raw.Volatile.of_hex sha1 sha1_raw;
         Tree_writer.write_tree_line'
           git_tree_writer
-          Non_executable_file
+          (match kind with
+           | Regular_file -> Non_executable_file
+           | Executable_file -> Executable_file
+           | Link -> Link)
           sha1_raw
           ~name:file);
       let%bind sha1_raw = Tree_writer.finalise git_tree_writer in
@@ -212,19 +243,19 @@ module Node = struct
        | None -> return None)
   ;;
 
-  let rec add_file' t node ~path sha1 (witness : Sequencer_witness.t) =
+  let rec add_file' t node ~path sha1 kind (witness : Sequencer_witness.t) =
     match path with
     | [] -> failwith "Empty path"
     | [ file ] ->
       let%bind state = ensure_loaded t node in
       (match Map.find (files state) file with
-       | Some old_sha1 when [%compare.equal: Sha1.Hex.t] old_sha1 sha1 ->
+       | Some { sha1 = old_sha1; _ } when [%compare.equal: Sha1.Hex.t] old_sha1 sha1 ->
          (* File already exists and is not being changed. *)
          return node
        | None | Some _ ->
          let state =
            Loaded_and_not_persisted
-             { files = Map.set (files state) ~key:file ~data:sha1
+             { files = Map.set (files state) ~key:file ~data:{ sha1; kind }
              ; directories = directories state
              }
          in
@@ -233,8 +264,8 @@ module Node = struct
       let%bind state = ensure_loaded t node in
       let%bind new_directory =
         match Map.find (directories state) directory with
-        | Some node -> add_file' t node ~path:drest sha1 witness
-        | None -> add_file' t (empty ()) ~path:drest sha1 witness
+        | Some node -> add_file' t node ~path:drest sha1 kind witness
+        | None -> add_file' t (empty ()) ~path:drest sha1 kind witness
       in
       (match is_persisted new_directory with
        | true -> (* Child directory was not changed *) return node
@@ -248,9 +279,9 @@ module Node = struct
          return { state = T state })
   ;;
 
-  let add_file t node ~path sha1 =
+  let add_file t node ~path sha1 kind =
     Throttle.enqueue t.mutation_sequencer (fun witness ->
-      add_file' t node ~path sha1 witness)
+      add_file' t node ~path sha1 kind witness)
   ;;
 
   let rec add_node' t node ~path new_node (witness : Sequencer_witness.t) =
@@ -347,9 +378,9 @@ end
 let get_file t ~path = Node.get_file t t.root ~path
 let get_node t ~path = Node.get_node t t.root ~path
 
-let add_file t ~path sha1 =
+let add_file t ~path sha1 kind =
   Throttle.enqueue t.mutation_sequencer (fun witness ->
-    let%map root = Node.add_file' t t.root ~path sha1 witness in
+    let%map root = Node.add_file' t t.root ~path sha1 kind witness in
     t.root <- root)
 ;;
 
@@ -406,8 +437,15 @@ let%test_module _ =
               if index = length - 1 then "F" ^ name else "D" ^ name)
           in
           let sha1 = gen_sha1 seed in
-          Hashtbl.set added ~key:(String.concat path ~sep:"/") ~data:sha1;
-          add_file t ~path sha1
+          let kind : File.Kind.t =
+            match Random.State.int seed 3 with
+            | 0 -> Regular_file
+            | 1 -> Executable_file
+            | 2 -> Link
+            | _ -> assert false
+          in
+          Hashtbl.set added ~key:(String.concat path ~sep:"/") ~data:{ File.sha1; kind };
+          add_file t ~path sha1 kind
         in
         let rec random_adds t = function
           | 0 -> Deferred.unit
@@ -431,35 +469,35 @@ let%test_module _ =
         let%bind () = random_adds t 100 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        let%bind () = [%expect {| 95d55928fcc1829e6174e5ed798c34771f326b5d |}] in
+        let%bind () = [%expect {| 90ae00be13448bbdbcb751e067976c0811b20280 |}] in
         let t = create object_store ~root:(Node.of_disk_hash sha1) in
         let%bind () = random_adds t 100 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        let%bind () = [%expect {| b0d688b87e5954d9fa8a1a1d1b0e44453c692357 |}] in
+        let%bind () = [%expect {| c871a5c3ac8bdd71738798b3c31d2f86ee951a05 |}] in
         let t = create object_store ~root:(Node.of_disk_hash sha1) in
         let%bind () = random_adds t 100 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        let%bind () = [%expect {| 39215c913b9a336b8da9a6e34d45dc78204dc366 |}] in
+        let%bind () = [%expect {| adca120a86840e38a1f880d1dc89e3d9360809b1 |}] in
         let%bind () = random_removes t 50 in
         let%bind () = random_adds t 100 in
         let%bind () = random_removes t 20 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        let%bind () = [%expect {| be5dc333d0bdd304208b2a02def6977554bc9fc3 |}] in
+        let%bind () = [%expect {| aa72c4b8329d7027e72c6222fc1c5716d43f8703 |}] in
         let%bind () =
-          Deferred.List.iter (Hashtbl.to_alist added) ~f:(fun (path, expected_sha1) ->
+          Deferred.List.iter (Hashtbl.to_alist added) ~f:(fun (path, expected) ->
             let path = String.split ~on:'/' path in
             let%map result = get_file t ~path in
-            if not ([%compare.equal: Sha1.Hex.t option] result (Some expected_sha1))
+            if not ([%compare.equal: File.t option] result (Some expected))
             then
               raise_s
                 [%message
                   "Path missing or incorrectly mapped"
                     (path : string list)
-                    (expected_sha1 : Sha1.Hex.t)
-                    (result : Sha1.Hex.t option)])
+                    (expected : File.t)
+                    (result : File.t option)])
         in
         return ())
     ;;
@@ -476,13 +514,13 @@ let%test_module _ =
         let t = create object_store ~root:(Node.empty ()) in
         let pr () = printf "is_persisted %b\n" (is_persisted t) in
         let sha1_file = Sha1.Hex.of_string "62e79c807f27a8a3fbf315e252ea20720c9bc3f5" in
-        let%bind () = add_file t ~path:[ "a"; "a" ] sha1_file in
+        let%bind () = add_file t ~path:[ "a"; "a" ] sha1_file Regular_file in
         pr ();
         let%bind () = [%expect {| is_persisted false |}] in
         let%bind (_ : Sha1.Hex.t) = persist t in
         pr ();
         let%bind () = [%expect {| is_persisted true |}] in
-        let%bind () = add_file t ~path:[ "a"; "a" ] sha1_file in
+        let%bind () = add_file t ~path:[ "a"; "a" ] sha1_file Regular_file in
         pr ();
         let%bind () = [%expect {| is_persisted true |}] in
         let%bind (_ : Sha1.Hex.t) = persist t in
