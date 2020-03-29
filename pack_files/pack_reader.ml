@@ -1180,6 +1180,25 @@ module Read_raw_delta_object_function = struct
 
   let sha1 = Sha1.Raw.Volatile.create ()
 
+  let delta_object_base_pos t ~pos ~data_start_pos object_type =
+    match (object_type : Pack_object_type.t) with
+    | Commit | Tree | Blob | Tag -> assert false
+    | Ofs_delta ->
+      let rel_offset =
+        read_variable_length_relative_offset t.pack_file_mmap ~pos:data_start_pos
+      in
+      pos - rel_offset
+    | Ref_delta ->
+      Bigstring.To_bytes.blit
+        ~src:t.pack_file_mmap
+        ~src_pos:data_start_pos
+        ~dst:(Sha1.Raw.Volatile.bytes sha1)
+        ~dst_pos:0
+        ~len:Sha1.Raw.length;
+      let index = Find_result.Volatile.index_exn (find_sha1_index' t sha1) in
+      pack_file_object_offset t ~index
+  ;;
+
   let rec impl t ~pos =
     let data_start_pos = skip_variable_length_integer t.pack_file_mmap ~pos in
     match object_type' t.pack_file_mmap ~pos with
@@ -1196,24 +1215,12 @@ module Read_raw_delta_object_function = struct
        | Tag -> Tag
        | Ofs_delta | Ref_delta -> assert false)
     | (Ofs_delta | Ref_delta) as object_type ->
-      let base_pos, data_start_pos =
+      let base_pos = delta_object_base_pos t ~pos ~data_start_pos object_type in
+      let data_start_pos =
         match object_type with
         | Commit | Tree | Blob | Tag -> assert false
-        | Ofs_delta ->
-          let rel_offset =
-            read_variable_length_relative_offset t.pack_file_mmap ~pos:data_start_pos
-          in
-          ( pos - rel_offset
-          , skip_variable_length_integer t.pack_file_mmap ~pos:data_start_pos )
-        | Ref_delta ->
-          Bigstring.To_bytes.blit
-            ~src:t.pack_file_mmap
-            ~src_pos:data_start_pos
-            ~dst:(Sha1.Raw.Volatile.bytes sha1)
-            ~dst_pos:0
-            ~len:Sha1.Raw.length;
-          let index = Find_result.Volatile.index_exn (find_sha1_index' t sha1) in
-          pack_file_object_offset t ~index, data_start_pos + Sha1.Raw.length
+        | Ofs_delta -> skip_variable_length_integer t.pack_file_mmap ~pos:data_start_pos
+        | Ref_delta -> data_start_pos + Sha1.Raw.length
       in
       let object_type = impl t ~pos:base_pos in
       Delta_object_parser.set_result_as_base t.delta_object_parser;
@@ -1350,6 +1357,63 @@ module Read_object_function = struct
 end
 
 let read_object = Read_object_function.impl
+
+module Size = struct
+  module Volatile = struct
+    type t =
+      { mutable size : int
+      ; mutable delta_size : int
+      ; mutable pack_size : int
+      }
+    [@@deriving fields]
+
+    let return =
+      let value = { size = 0; pack_size = 0; delta_size = 0 } in
+      fun ~size ~pack_size ~delta_size ->
+        Fields.Direct.set_all_mutable_fields value ~size ~pack_size ~delta_size;
+        value
+    ;;
+  end
+
+  let impl t ~index =
+    let pos = pack_file_object_offset t ~index in
+    let pack_object_type = object_type' t.pack_file_mmap ~pos in
+    let data_start_pos = skip_variable_length_integer t.pack_file_mmap ~pos in
+    let data_start_pos =
+      match pack_object_type with
+      | Commit | Tree | Blob | Tag -> data_start_pos
+      | Ofs_delta -> skip_variable_length_integer t.pack_file_mmap ~pos:data_start_pos
+      | Ref_delta -> data_start_pos + Sha1.Raw.length
+    in
+    Delta_object_parser.begin_zlib_inflate_into_result t.delta_object_parser;
+    let data_length =
+      feed_parser_data
+        t.delta_object_parser
+        ~process:Delta_object_parser.feed_result_zlib_inflate
+        ~finalise:Delta_object_parser.finalise_result_zlib_inflate
+        t.pack_file_mmap
+        ~pos:data_start_pos
+    in
+    let pack_size = data_start_pos + data_length - pos in
+    let delta_size = object_length' t.pack_file_mmap ~pos in
+    let size =
+      match pack_object_type with
+      | Commit | Tree | Blob | Tag -> delta_size
+      | Ofs_delta | Ref_delta ->
+        let result_buf = Delta_object_parser.result_buf t.delta_object_parser in
+        (* The uncompressed delta starts with the length of the expected base object
+           and the length of the expected undeltified result encoded as variable length
+           integers before the list of delta operations.
+
+           Skip over the first length and return the second one. *)
+        let result_pos = skip_variable_length_integer result_buf ~pos:0 in
+        read_variable_length_integer result_buf ~pos:result_pos
+    in
+    Volatile.return ~size ~delta_size ~pack_size
+  ;;
+end
+
+let size = Size.impl
 
 module For_testing = struct
   let print_out_pack_file pack_file =

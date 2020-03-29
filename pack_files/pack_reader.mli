@@ -85,6 +85,27 @@ val read_raw_object
   -> on_payload:(Bigstring.t -> pos:int -> len:int -> unit)
   -> unit
 
+module Size : sig
+  module Volatile : sig
+    (** Do not keep references to instances of this type as they will be mutated
+        on every call to [size]. *)
+    type t = private
+      { mutable size : int (** [size] represents the size of the unpacked object. *)
+      ; mutable delta_size : int
+      (** For objects that are stored in deltified representation relative to a
+          different object, [delta_size] represents the size of that representation.
+          For objects that are stored in undeltified representation, [delta_size]
+          will just be equal to [size]. *)
+      ; mutable pack_size : int
+      (** [pack_size] represents the size that the object occupies in the pack. *)
+      }
+  end
+end
+
+(** Returns the size of the object at the given [index].
+    Raises if [index] is outside of the range [0 .. items_in_pack - 1]. *)
+val size : _ t -> index:int -> Size.Volatile.t
+
 module For_testing : sig
   val print_out_pack_file : string -> unit Deferred.t
 end

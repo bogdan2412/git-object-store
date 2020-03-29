@@ -56,12 +56,23 @@ let read_git_pack_file pack_file =
   let%map t = Git.Pack_reader.create ~pack_file Validate_sha1 in
   let items_in_pack = Git.Pack_reader.items_in_pack t in
   Core.printf "items in pack: %d\n" items_in_pack;
-  Core.printf "    idx | %40s\n" "sha1";
+  Core.printf
+    "    idx | %40s | %10s | %10s | %10s\n"
+    "sha1"
+    "pack_size"
+    "delta_size"
+    "size";
   for index = 0 to items_in_pack - 1 do
+    let { Git.Pack_reader.Size.Volatile.size; delta_size; pack_size } =
+      Git.Pack_reader.size t ~index
+    in
     Core.printf
-      !"%7d | %{Sha1.Hex}\n"
+      !"%7d | %{Sha1.Hex} | %10d | %10d | %10d\n"
       index
       (Sha1.Raw.Volatile.to_hex (Git.Pack_reader.sha1 t ~index))
+      pack_size
+      delta_size
+      size
   done;
   for index = 0 to items_in_pack - 1 do
     Core.printf
