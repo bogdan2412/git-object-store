@@ -1,6 +1,7 @@
 module Commit = Git_core_types.Commit
 module File_mode = Git_core_types.File_mode
 module Object_reader = Git_object_files.Reader
+module Object_type = Git_core_types.Object_type
 module Object_writer = Git_object_files.Writer
 module Pack_reader = Git_pack_files.Reader
 module Sha1 = Git_core_types.Sha1
