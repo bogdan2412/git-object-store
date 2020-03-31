@@ -349,6 +349,7 @@ let () =
       and mountpoint = anon ("MOUNTPOINT" %: Filename.arg_type) in
       fun () ->
         let argv = Sys.get_argv () in
+        let git_directory = Filename.realpath git_directory in
         (* Do some sanity checks before mounting. *)
         if not (Core.Sys.is_directory_exn git_directory)
         then
