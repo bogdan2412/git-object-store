@@ -366,15 +366,19 @@ let size t sha1 =
     in
     return size
   | Unpacked_file_if_exists { path } ->
+    let received_size = ref false in
     let returned_size = ref (-1) in
     let%bind () =
       read_raw_object_from_unpacked_file
         t
         sha1
         path
-        ~on_header:(fun (_ : Object_type.t) ~size -> returned_size := size)
+        ~on_header:(fun (_ : Object_type.t) ~size ->
+          received_size := true;
+          returned_size := size)
         ~on_payload:(fun (_ : Bigstring.t) ~pos:(_ : int) ~len:(_ : int) -> ())
-        ~push_back:(fun () -> return `Reader_closed)
+        ~push_back:(fun () ->
+          if !received_size then return `Reader_closed else return `Ok)
     in
     if !returned_size <= -1
     then
