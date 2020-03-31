@@ -31,43 +31,68 @@ module Make (Parser : Parser) = struct
   type 'Sha1_validation t =
     { parser : 'Sha1_validation Parser.t
     ; zlib_inflate : Zlib.Inflate.t
+    ; buf : Bigstring.t
     ; on_error : Error.t -> unit
     }
+
+  let initial_read_chunk = 256
 
   let create parser ~on_error =
     let zlib_inflate =
       Zlib.Inflate.create_uninitialised ~on_data_chunk:(Parser.append_data parser)
     in
-    { parser; zlib_inflate; on_error }
+    let buf = Bigstring.create initial_read_chunk in
+    { parser; zlib_inflate; buf; on_error }
+  ;;
+
+  let zlib_finalize t expected_sha1 =
+    Or_error.try_with (fun () ->
+      Zlib.Inflate.finalise t.zlib_inflate;
+      Parser.finalise t.parser expected_sha1)
+    |> Or_error.iter_error ~f:t.on_error
   ;;
 
   let read_file' t ~file ~push_back expected_sha1 =
     Parser.reset t.parser;
     Zlib.Inflate.init_or_reset t.zlib_inflate;
-    match%map
-      Reader.with_file file ~f:(fun reader ->
-        Reader.read_one_chunk_at_a_time reader ~handle_chunk:(fun buf ~pos ~len ->
-          let consumed = Zlib.Inflate.process t.zlib_inflate buf ~pos ~len in
-          if consumed <> len
-          then
-            return
-              (`Stop_consumed
-                 ( Or_error.error_string
-                     "Unexpected extra data at the end of git object file"
-                 , consumed ))
-          else (
-            match%map push_back () with
-            | `Ok -> `Continue
-            | `Reader_closed -> `Stop (Ok ()))))
-    with
-    | `Eof ->
-      Or_error.try_with (fun () ->
-        Zlib.Inflate.finalise t.zlib_inflate;
-        Parser.finalise t.parser expected_sha1)
-      |> Or_error.iter_error ~f:t.on_error
-    | `Eof_with_unconsumed_data _ ->
-      failwith "Reader left unconsumed input, should be impossible"
-    | `Stopped or_error -> Or_error.iter_error or_error ~f:t.on_error
+    let handle_chunk buf ~pos ~len =
+      let consumed = Zlib.Inflate.process t.zlib_inflate buf ~pos ~len in
+      if consumed <> len
+      then
+        return
+          (`Stop_consumed
+             ( Or_error.error_string "Unexpected extra data at the end of git object file"
+             , consumed ))
+      else (
+        match%map push_back () with
+        | `Ok -> `Continue
+        | `Reader_closed -> `Stop (Ok ()))
+    in
+    let%bind fd = Unix.openfile file ~mode:[ `Rdonly ] ~perm:0o000 in
+    Monitor.protect
+      ~finally:(fun () -> Fd.close fd)
+      (fun () ->
+         let%bind len =
+           Fd.syscall_in_thread_exn fd ~name:"read" (fun file_descr ->
+             Bigstring.read file_descr t.buf ~pos:0 ~len:initial_read_chunk)
+         in
+         match%bind handle_chunk t.buf ~pos:0 ~len with
+         | `Stop or_error | `Stop_consumed (or_error, _) ->
+           Or_error.iter_error or_error ~f:t.on_error;
+           Deferred.unit
+         | `Continue when Int.( <> ) len initial_read_chunk ->
+           zlib_finalize t expected_sha1;
+           Deferred.unit
+         | `Continue ->
+           let reader = Reader.create fd in
+           (match%map
+              Reader.with_close reader ~f:(fun () ->
+                Reader.read_one_chunk_at_a_time reader ~handle_chunk)
+            with
+            | `Eof -> zlib_finalize t expected_sha1
+            | `Eof_with_unconsumed_data _ ->
+              failwith "Reader left unconsumed input, should be impossible"
+            | `Stopped or_error -> Or_error.iter_error or_error ~f:t.on_error))
   ;;
 
   let read_file t ~file expected_sha1 =
