@@ -51,7 +51,7 @@ let read_git_object_file file =
       Git.Object_reader.read_file git_object_reader ~file sha1)
 ;;
 
-let read_git_pack_file pack_file =
+let read_git_pack_file ~print_contents pack_file =
   let open Deferred.Or_error.Let_syntax in
   let%map t = Git.Pack_reader.create ~pack_file Validate_sha1 in
   let items_in_pack = Git.Pack_reader.items_in_pack t in
@@ -74,32 +74,34 @@ let read_git_pack_file pack_file =
       delta_size
       size
   done;
-  for index = 0 to items_in_pack - 1 do
-    Core.printf
-      !"\n%{Sha1.Hex}\n"
-      (Sha1.Raw.Volatile.to_hex (Git.Pack_reader.sha1 t ~index));
-    try
-      Git.Pack_reader.read_object
-        t
-        ~index
-        ~on_blob_size:(fun (_ : int) -> ())
-        ~on_blob_chunk:(fun buf ~pos ~len ->
-          Core.printf "Blob chunk:\n%s\n" (Bigstring.To_string.sub buf ~pos ~len))
-        ~on_commit:(Core.printf !"%{sexp: Git.Commit.t}\n")
-        ~on_tree_line:(fun file_mode sha1 ~name ->
-          Core.printf
-            !"Tree line: %{sexp: Git.File_mode.t} %{Sha1.Hex} %s\n"
-            file_mode
-            (Sha1.Raw.Volatile.to_hex sha1)
-            name)
-        ~on_tag:(Core.printf !"%{sexp: Git.Tag.t}\n")
-    with
-    | exn ->
-      Core.eprintf
-        !"Error parsing %{Sha1.Hex}:\n%{Exn}\n"
-        (Sha1.Raw.Volatile.to_hex (Git.Pack_reader.sha1 t ~index))
-        exn
-  done
+  if print_contents
+  then
+    for index = 0 to items_in_pack - 1 do
+      Core.printf
+        !"\n%{Sha1.Hex}\n"
+        (Sha1.Raw.Volatile.to_hex (Git.Pack_reader.sha1 t ~index));
+      try
+        Git.Pack_reader.read_object
+          t
+          ~index
+          ~on_blob_size:(fun (_ : int) -> ())
+          ~on_blob_chunk:(fun buf ~pos ~len ->
+            Core.printf "Blob chunk:\n%s\n" (Bigstring.To_string.sub buf ~pos ~len))
+          ~on_commit:(Core.printf !"%{sexp: Git.Commit.t}\n")
+          ~on_tree_line:(fun file_mode sha1 ~name ->
+            Core.printf
+              !"Tree line: %{sexp: Git.File_mode.t} %{Sha1.Hex} %s\n"
+              file_mode
+              (Sha1.Raw.Volatile.to_hex sha1)
+              name)
+          ~on_tag:(Core.printf !"%{sexp: Git.Tag.t}\n")
+      with
+      | exn ->
+        Core.eprintf
+          !"Error parsing %{Sha1.Hex}:\n%{Exn}\n"
+          (Sha1.Raw.Volatile.to_hex (Git.Pack_reader.sha1 t ~index))
+          exn
+    done
 ;;
 
 let index_git_pack_file pack_file = Git.Pack_reader.index_pack ~pack_file
@@ -215,8 +217,14 @@ let read_git_pack_file_command =
   Command.async_or_error
     ~summary:"print git pack file"
     [%map_open.Command
-      let file = anon ("FILE" %: Filename.arg_type) in
-      fun () -> read_git_pack_file file]
+      let file = anon ("FILE" %: Filename.arg_type)
+      and print_contents =
+        flag
+          "-print-contents"
+          no_arg
+          ~doc:" print pack object contents in addition to the index"
+      in
+      fun () -> read_git_pack_file ~print_contents file]
 ;;
 
 let index_git_pack_file_command =
