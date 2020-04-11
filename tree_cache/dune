@@ -1,9 +1,7 @@
 (library
  (name git_tree_cache)
  (public_name git.tree_cache)
- (libraries
-  async
-  core
-  git_object_store)
+ (libraries async core git_object_store)
  (inline_tests)
- (preprocess (pps ppx_jane)))
+ (preprocess
+  (pps ppx_jane)))

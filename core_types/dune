@@ -3,4 +3,5 @@
  (public_name git.core_types)
  (libraries async core git_bindings_sha1)
  (inline_tests)
- (preprocess (pps ppx_jane)))
+ (preprocess
+  (pps ppx_jane)))

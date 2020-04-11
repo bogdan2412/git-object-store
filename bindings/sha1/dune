@@ -2,4 +2,5 @@
  (name git_bindings_sha1)
  (public_name git.bindings_sha1)
  (libraries core digestif.c)
- (preprocess (pps ppx_jane)))
+ (preprocess
+  (pps ppx_jane)))
