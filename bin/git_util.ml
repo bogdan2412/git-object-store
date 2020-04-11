@@ -177,7 +177,7 @@ let write_tree_from_file ~object_directory file =
     printf !"%{Sha1.Hex}\n" (Sha1.Raw.to_hex sha1))
 ;;
 
-let write_blob_from_file ~object_directory file =
+let write_blob_from_file' ~object_directory file =
   Monitor.try_with_or_error ~extract_exn:true (fun () ->
     let%bind stat = Unix.stat file in
     let length = Int64.to_int_exn stat.size in
@@ -201,8 +201,81 @@ let write_blob_from_file ~object_directory file =
               "bug - unexpected read_one_chunk_at_a_time result"
                 (result : _ Reader.read_one_chunk_at_a_time_result)])
     in
-    let%map sha1 = Git.Object_writer.Blob.Known_size.finalise_exn blob_writer in
-    printf !"%{Sha1.Hex}\n" (Sha1.Raw.to_hex sha1))
+    Git.Object_writer.Blob.Known_size.finalise_exn blob_writer)
+;;
+
+let write_blob_from_file ~object_directory file =
+  let%map.Deferred.Or_error sha1 = write_blob_from_file' ~object_directory file in
+  printf !"%{Sha1.Hex}\n" (Sha1.Raw.to_hex sha1)
+;;
+
+let rec write_tree_from_directory' ~object_directory ~source_directory =
+  Monitor.try_with_or_error ~extract_exn:true (fun () ->
+    let tree_writer = Git.Object_writer.Tree.create_uninitialised ~object_directory in
+    let%bind () = Git.Object_writer.Tree.init_or_reset tree_writer in
+    let%bind entries = Sys.readdir source_directory in
+    Array.sort entries ~compare:[%compare: string];
+    let%bind () =
+      Deferred.Array.iter ~how:`Sequential entries ~f:(fun entry ->
+        let path = source_directory ^/ entry in
+        let%bind stat = Unix.lstat path in
+        match stat.kind with
+        | `Socket | `Block | `Fifo | `Char ->
+          raise_s
+            [%message
+              "Unable to handle path kind"
+                (path : string)
+                ~kind:(stat.kind : Unix.File_kind.t)]
+        | `File ->
+          let%bind sha1 = write_blob_from_file' ~object_directory path >>| ok_exn in
+          Git.Object_writer.Tree.write_tree_line
+            tree_writer
+            (if stat.perm land 0o111 = 0
+             then Non_executable_file
+             else Executable_file)
+            sha1
+            ~name:entry;
+          Deferred.unit
+        | `Link ->
+          let%bind link_path = Unix.readlink path in
+          let blob_writer =
+            Git.Object_writer.Blob.Known_size.create_uninitialised ~object_directory
+          in
+          let%bind () =
+            Git.Object_writer.Blob.Known_size.init_or_reset
+              blob_writer
+              ~length:(String.length link_path)
+          in
+          Git.Object_writer.Blob.Known_size.append_data
+            blob_writer
+            (Bigstring.of_string link_path)
+            ~pos:0
+            ~len:(String.length link_path);
+          let%bind sha1 =
+            Git.Object_writer.Blob.Known_size.finalise_exn blob_writer
+          in
+          Git.Object_writer.Tree.write_tree_line tree_writer Link sha1 ~name:entry;
+          Deferred.unit
+        | `Directory ->
+          let%bind sha1 =
+            write_tree_from_directory' ~object_directory ~source_directory:path
+            >>| ok_exn
+          in
+          Git.Object_writer.Tree.write_tree_line
+            tree_writer
+            Directory
+            sha1
+            ~name:entry;
+          Deferred.unit)
+    in
+    Git.Object_writer.Tree.finalise tree_writer)
+;;
+
+let write_tree_from_directory ~object_directory ~source_directory =
+  let%map.Deferred.Or_error sha1 =
+    write_tree_from_directory' ~object_directory ~source_directory
+  in
+  printf !"%{Sha1.Hex}\n" (Sha1.Raw.to_hex sha1)
 ;;
 
 let read_git_object_file_command =
@@ -276,6 +349,15 @@ let write_blob_from_file_command =
       fun () -> write_blob_from_file ~object_directory file]
 ;;
 
+let write_tree_from_directory_command =
+  Command.async_or_error
+    ~summary:"create a tree from a directory on disk and its contents"
+    [%map_open.Command
+      let object_directory = Git.Util.object_directory_param
+      and source_directory = anon ("SOURCE-DIRECTORY" %: Filename.arg_type) in
+      fun () -> write_tree_from_directory ~object_directory ~source_directory]
+;;
+
 let command =
   Command.group
     ~summary:"git object store"
@@ -286,6 +368,7 @@ let command =
     ; "write-commit-from-file", write_commit_from_file_command
     ; "write-tree-from-file", write_tree_from_file_command
     ; "write-blob-from-file", write_blob_from_file_command
+    ; "write-tree-from-directory", write_tree_from_directory_command
     ]
 ;;
 
