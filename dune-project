@@ -1,2 +1,2 @@
-(lang dune 1.7)
+(lang dune 2.4)
 (name git_object_store)

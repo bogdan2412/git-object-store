@@ -2,5 +2,8 @@
  (name git_bindings_crc32)
  (public_name git.bindings_crc32)
  (libraries core)
- (c_names crc32_stubs)
- (preprocess (pps ppx_jane)))
+ (foreign_stubs
+  (language c)
+  (names crc32_stubs))
+ (preprocess
+  (pps ppx_jane)))
