@@ -181,12 +181,8 @@ module Node = struct
     | T (Loading (sha1, _)) -> return sha1
     | T (Loaded_and_not_persisted { files; directories }) ->
       let%bind directory_sha1s =
-        Map.map directories ~f:(fun node -> persist' t node witness)
-        |> Map.to_alist
-        |> List.map ~f:(fun (name, def) ->
-          let%map def = def in
-          name, def)
-        |> Deferred.all
+        Deferred.Map.map directories ~f:(fun node -> persist' t node witness)
+        >>| Map.to_alist
       in
       let git_tree_writer =
         Tree_writer.create_uninitialised
