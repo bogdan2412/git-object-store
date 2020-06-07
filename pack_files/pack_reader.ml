@@ -500,7 +500,7 @@ let with_file file_path ~f =
       let%bind file_mmap =
         Monitor.try_with_or_error ~extract_exn:true (fun () ->
           Fd.syscall_in_thread_exn ~name:"git-pack-mmap-file" fd (fun file_descr ->
-            Bigstring.map_file ~shared:false file_descr file_size))
+            Bigstring_unix.map_file ~shared:false file_descr file_size))
       in
       f fd file_size file_mmap)
 ;;
@@ -821,7 +821,7 @@ module Index = struct
       let%bind fd = Unix.openfile ~mode:[ `Rdwr; `Creat; `Trunc ] index_file in
       let%map file_mmap =
         Fd.syscall_in_thread_exn ~name:"git-pack-mmap-file" fd (fun file_descr ->
-          Bigstring.map_file ~shared:true file_descr index_file_size)
+          Bigstring_unix.map_file ~shared:true file_descr index_file_size)
       in
       Bigstring.unsafe_set_uint32_le file_mmap ~pos:0 1666151679;
       Bigstring.unsafe_set_uint32_be file_mmap ~pos:4 2;

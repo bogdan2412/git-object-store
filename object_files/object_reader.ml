@@ -74,7 +74,7 @@ module Make (Parser : Parser) = struct
       (fun () ->
          let%bind len =
            Fd.syscall_in_thread_exn fd ~name:"read" (fun file_descr ->
-             Bigstring.read file_descr t.buf ~pos:0 ~len:initial_read_chunk)
+             Bigstring_unix.read file_descr t.buf ~pos:0 ~len:initial_read_chunk)
          in
          match%bind handle_chunk t.buf ~pos:0 ~len with
          | `Stop or_error | `Stop_consumed (or_error, _) ->

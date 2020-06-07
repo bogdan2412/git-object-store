@@ -150,7 +150,7 @@ let finalise_exn t =
       assert (Int64.(result = of_int_exn 8));
       let buf = Bigstring.create 4 in
       Bigstring.set_uint32_be_exn buf ~pos:0 t.items_in_pack;
-      Fd.syscall_exn fd (fun desc -> Bigstring.really_write desc buf))
+      Fd.syscall_exn fd (fun desc -> Bigstring_unix.really_write desc buf))
   in
   let sha1 = Sha1.Compute.create_uninitialised () in
   let sha1 = Sha1.Compute.init_or_reset sha1 in
@@ -176,7 +176,7 @@ let finalise_exn t =
         ~dst:buf
         ~dst_pos:0
         ~len:Sha1.Raw.length;
-      Fd.syscall_exn fd (fun desc -> Bigstring.really_write desc buf))
+      Fd.syscall_exn fd (fun desc -> Bigstring_unix.really_write desc buf))
   in
   let file_name =
     Filename.concat
