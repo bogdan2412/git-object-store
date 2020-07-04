@@ -418,7 +418,11 @@ let with_on_disk_file t sha1 ~f =
            ~object_directory:t.object_directory
        in
        let%bind () =
-         Object_writer.With_header.Known_size.init_or_reset writer object_type ~length
+         Object_writer.With_header.Known_size.init_or_reset
+           writer
+           object_type
+           ~length
+           ~dry_run:false
        in
        let data = Set_once.get_exn data [%here] in
        Object_writer.With_header.Known_size.append_data

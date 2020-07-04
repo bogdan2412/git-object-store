@@ -188,7 +188,7 @@ module Node = struct
         Tree_writer.create_uninitialised
           ~object_directory:(Object_store.Packed.object_directory t.object_store)
       in
-      let%bind () = Tree_writer.init_or_reset git_tree_writer in
+      let%bind () = Tree_writer.init_or_reset git_tree_writer ~dry_run:false in
       let sha1_raw = Sha1.Raw.Volatile.create () in
       List.iter directory_sha1s ~f:(fun (directory, sha1) ->
         Sha1.Raw.Volatile.of_hex sha1 sha1_raw;

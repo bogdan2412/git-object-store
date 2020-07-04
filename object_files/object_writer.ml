@@ -23,93 +23,172 @@ module Raw : sig
   type t
 
   val create_uninitialised : object_directory:string -> t
-  val init_or_reset : t -> unit Deferred.t
+  val init_or_reset : t -> dry_run:bool -> unit Deferred.t
   val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
   val finalise : t -> Sha1.Raw.t Deferred.t
   val abort : t -> unit Deferred.t
 end = struct
+  module State : sig
+    module View : sig
+      type t = private
+        | Not_initialised
+        | Dry_run of { mutable sha1_compute : [ `Initialised ] Sha1.Compute.t }
+        | Initialised of
+            { mutable writer : Writer.t
+            ; mutable temp_file_name : string
+            ; mutable sha1_compute : [ `Initialised ] Sha1.Compute.t
+            ; zlib_deflate : Zlib.Deflate.t
+            }
+    end
+
+    type t
+
+    val create : unit -> t
+    val set_not_initialised : t -> unit
+    val set_dry_run : t -> unit
+    val set_initialised : t -> writer:Writer.t -> temp_file_name:string -> unit
+    val view : t -> View.t
+  end = struct
+    module View = struct
+      type t =
+        | Not_initialised
+        | Dry_run of { mutable sha1_compute : [ `Initialised ] Sha1.Compute.t }
+        | Initialised of
+            { mutable writer : Writer.t
+            ; mutable temp_file_name : string
+            ; mutable sha1_compute : [ `Initialised ] Sha1.Compute.t
+            ; zlib_deflate : Zlib.Deflate.t
+            }
+    end
+
+    type t =
+      { mutable current : View.t
+      ; dry_run : View.t
+      ; initialised : View.t
+      }
+
+    let create () =
+      let sha1_compute =
+        Sha1.Compute.create_uninitialised () |> Sha1.Compute.init_or_reset
+      in
+      let rec initialised =
+        lazy
+          (View.Initialised
+             { writer = Lazy.force Writer.stdout
+             ; temp_file_name = "/dev/stdout"
+             ; sha1_compute
+             ; zlib_deflate = force zlib_deflate
+             })
+      and zlib_deflate =
+        lazy
+          (Zlib.Deflate.create_uninitialised ~on_data_chunk:(fun buf ~pos ~len ->
+             match force initialised with
+             | Initialised record -> Writer.write_bigstring record.writer buf ~pos ~len
+             | Dry_run _ | Not_initialised -> assert false))
+      in
+      { current = Not_initialised
+      ; dry_run = Dry_run { sha1_compute }
+      ; initialised = force initialised
+      }
+    ;;
+
+    let set_not_initialised t = t.current <- Not_initialised
+
+    let set_dry_run t =
+      t.current <- t.dry_run;
+      match t.dry_run with
+      | Dry_run record ->
+        record.sha1_compute <- Sha1.Compute.init_or_reset record.sha1_compute
+      | Initialised _ | Not_initialised -> assert false
+    ;;
+
+    let set_initialised t ~writer ~temp_file_name =
+      t.current <- t.initialised;
+      match t.initialised with
+      | Initialised record ->
+        record.writer <- writer;
+        record.temp_file_name <- temp_file_name;
+        record.sha1_compute <- Sha1.Compute.init_or_reset record.sha1_compute;
+        Zlib.Deflate.init_or_reset record.zlib_deflate
+      | Dry_run _ | Not_initialised -> assert false
+    ;;
+
+    let view t = t.current
+  end
+
   type t =
     { object_directory : string
-    ; mutable temp_file_name : string
-    ; mutable writer : Writer.t
-    ; mutable sha1_compute : [ `Initialised ] Sha1.Compute.t
-    ; zlib_deflate : Zlib.Deflate.t
-    ; mutable initialised : bool
+    ; state : State.t
     }
 
   let create_uninitialised ~object_directory =
-    let temp_file_name = "/dev/stdout" in
-    let writer = Lazy.force Writer.stdout in
-    let sha1_compute =
-      Sha1.Compute.create_uninitialised () |> Sha1.Compute.init_or_reset
-    in
-    let rec zlib_deflate =
-      lazy
-        (Zlib.Deflate.create_uninitialised ~on_data_chunk:(fun buf ~pos ~len ->
-           Writer.write_bigstring (Lazy.force t).writer buf ~pos ~len))
-    and t =
-      lazy
-        { zlib_deflate = Lazy.force zlib_deflate
-        ; sha1_compute
-        ; object_directory
-        ; temp_file_name
-        ; writer
-        ; initialised = false
-        }
-    in
-    Lazy.force t
+    { object_directory; state = State.create () }
   ;;
 
-  let init_or_reset t =
-    let temp_file_name =
-      Filename.temp_file ~in_dir:t.object_directory "write-in-progress" ""
-    in
-    let%map writer = Writer.open_file temp_file_name in
-    t.temp_file_name <- temp_file_name;
-    t.writer <- writer;
-    Zlib.Deflate.init_or_reset t.zlib_deflate;
-    t.sha1_compute <- Sha1.Compute.init_or_reset t.sha1_compute;
-    t.initialised <- true
+  let init_or_reset t ~dry_run =
+    match dry_run with
+    | true ->
+      State.set_dry_run t.state;
+      Deferred.unit
+    | false ->
+      let temp_file_name =
+        Filename.temp_file ~in_dir:t.object_directory "write-in-progress" ""
+      in
+      let%map writer = Writer.open_file temp_file_name in
+      State.set_initialised t.state ~writer ~temp_file_name
   ;;
 
-  let assert_initialised t =
-    if not t.initialised then failwith "Git_object_writer used while not initialised"
+  let[@cold] raise_not_initialised () =
+    failwith "Git_object_writer used while not initialised"
   ;;
 
   let append_data t buf ~pos ~len =
-    assert_initialised t;
-    Zlib.Deflate.process t.zlib_deflate buf ~pos ~len;
-    Sha1.Compute.process t.sha1_compute buf ~pos ~len
+    match State.view t.state with
+    | Not_initialised -> raise_not_initialised ()
+    | Dry_run { sha1_compute } -> Sha1.Compute.process sha1_compute buf ~pos ~len
+    | Initialised { writer = _; temp_file_name = _; sha1_compute; zlib_deflate } ->
+      Sha1.Compute.process sha1_compute buf ~pos ~len;
+      Zlib.Deflate.process zlib_deflate buf ~pos ~len
   ;;
 
   let finalise t =
-    assert_initialised t;
-    Zlib.Deflate.finalise t.zlib_deflate;
-    let%bind () = Writer.flushed t.writer in
-    let%bind () = Writer.close t.writer in
-    let sha1_compute = Sha1.Compute.finalise t.sha1_compute in
-    let sha1_hex = Sha1.Compute.get_hex sha1_compute in
-    let sha1_raw = Sha1.Raw.Volatile.non_volatile (Sha1.Compute.get_raw sha1_compute) in
-    let dir, file =
-      let str = Sha1.Hex.Volatile.to_string sha1_hex in
-      ( Filename.concat t.object_directory (String.sub str ~pos:0 ~len:2)
-      , String.sub str ~pos:2 ~len:(Sha1.Hex.length - 2) )
-    in
-    let%bind () = Unix.mkdir ~p:() dir in
-    let new_path = Filename.concat dir file in
-    let%map () = Sys.rename t.temp_file_name new_path in
-    t.initialised <- false;
-    sha1_raw
+    match State.view t.state with
+    | Not_initialised -> raise_not_initialised ()
+    | Dry_run { sha1_compute } ->
+      let sha1_compute = Sha1.Compute.finalise sha1_compute in
+      let sha1_raw = Sha1.Raw.Volatile.non_volatile (Sha1.Compute.get_raw sha1_compute) in
+      State.set_not_initialised t.state;
+      return sha1_raw
+    | Initialised { writer; temp_file_name; sha1_compute; zlib_deflate } ->
+      Zlib.Deflate.finalise zlib_deflate;
+      let%bind () = Writer.flushed writer in
+      let%bind () = Writer.close writer in
+      let sha1_compute = Sha1.Compute.finalise sha1_compute in
+      let sha1_hex = Sha1.Compute.get_hex sha1_compute in
+      let sha1_raw = Sha1.Raw.Volatile.non_volatile (Sha1.Compute.get_raw sha1_compute) in
+      let dir, file =
+        let str = Sha1.Hex.Volatile.to_string sha1_hex in
+        ( Filename.concat t.object_directory (String.sub str ~pos:0 ~len:2)
+        , String.sub str ~pos:2 ~len:(Sha1.Hex.length - 2) )
+      in
+      let%bind () = Unix.mkdir ~p:() dir in
+      let new_path = Filename.concat dir file in
+      let%map () = Sys.rename temp_file_name new_path in
+      State.set_not_initialised t.state;
+      sha1_raw
   ;;
 
   let abort t =
-    if t.initialised
-    then (
-      let%bind () = Writer.flushed t.writer in
-      let%bind () = Writer.close t.writer in
-      let%map () = Unix.unlink t.temp_file_name in
-      t.initialised <- false)
-    else Deferred.unit
+    match State.view t.state with
+    | Not_initialised -> Deferred.unit
+    | Dry_run { sha1_compute = _ } ->
+      State.set_not_initialised t.state;
+      Deferred.unit
+    | Initialised { writer; temp_file_name; sha1_compute = _; zlib_deflate = _ } ->
+      State.set_not_initialised t.state;
+      let%bind () = Writer.flushed writer in
+      let%bind () = Writer.close writer in
+      Unix.unlink temp_file_name
   ;;
 end
 
@@ -118,7 +197,7 @@ module With_header = struct
     type t
 
     val create_uninitialised : object_directory:string -> t
-    val init_or_reset : t -> Object_type.t -> unit Deferred.t
+    val init_or_reset : t -> Object_type.t -> dry_run:bool -> unit Deferred.t
     val double_buffer_space : t -> unit
     val make_room : t -> for_bytes:int -> unit
     val buf : t -> Bigstring.t
@@ -164,8 +243,8 @@ module With_header = struct
     let len t = Bigstring.length t.buf - t.pos
     let advance_pos t ~by = t.pos <- t.pos + by
 
-    let init_or_reset t object_type =
-      let%map () = Raw.init_or_reset t.raw in
+    let init_or_reset t object_type ~dry_run =
+      let%map () = Raw.init_or_reset t.raw ~dry_run in
       make_room_for_pos t ~pos:32;
       t.object_type <- object_type;
       t.start <- 32;
@@ -195,7 +274,14 @@ module With_header = struct
     type t
 
     val create_uninitialised : object_directory:string -> t
-    val init_or_reset : t -> Object_type.t -> length:int -> unit Deferred.t
+
+    val init_or_reset
+      :  t
+      -> Object_type.t
+      -> length:int
+      -> dry_run:bool
+      -> unit Deferred.t
+
     val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
     val finalise_exn : t -> Sha1.Raw.t Deferred.t
     val abort : t -> unit Deferred.t
@@ -215,13 +301,13 @@ module With_header = struct
       }
     ;;
 
-    let init_or_reset t object_type ~length =
+    let init_or_reset t object_type ~length ~dry_run =
       let header_len =
         Header_writer.write_from_left t.buf ~pos:0 object_type ~object_length:length
       in
       t.expected <- length;
       t.written <- 0;
-      let%map () = Raw.init_or_reset t.raw in
+      let%map () = Raw.init_or_reset t.raw ~dry_run in
       Raw.append_data t.raw t.buf ~pos:0 ~len:header_len
     ;;
 
@@ -254,8 +340,8 @@ module Commit = struct
     With_header.Unknown_size.create_uninitialised ~object_directory
   ;;
 
-  let write t commit =
-    let%bind () = With_header.Unknown_size.init_or_reset t Commit in
+  let write t commit ~dry_run =
+    let%bind () = With_header.Unknown_size.init_or_reset t Commit ~dry_run in
     let commit_str = Commit.format_as_git_object_payload commit in
     let commit_len = String.length commit_str in
     With_header.Unknown_size.make_room t ~for_bytes:commit_len;
@@ -269,9 +355,9 @@ module Commit = struct
     With_header.Unknown_size.finalise t
   ;;
 
-  let write' ~object_directory commit =
+  let write' ~object_directory commit ~dry_run =
     let t = create ~object_directory in
-    write t commit
+    write t commit ~dry_run
   ;;
 end
 
@@ -284,8 +370,8 @@ module Tag = struct
     With_header.Unknown_size.create_uninitialised ~object_directory
   ;;
 
-  let write t tag =
-    let%bind () = With_header.Unknown_size.init_or_reset t Tag in
+  let write t tag ~dry_run =
+    let%bind () = With_header.Unknown_size.init_or_reset t Tag ~dry_run in
     let tag_str = Tag.format_as_git_object_payload tag in
     let tag_len = String.length tag_str in
     With_header.Unknown_size.make_room t ~for_bytes:tag_len;
@@ -299,9 +385,9 @@ module Tag = struct
     With_header.Unknown_size.finalise t
   ;;
 
-  let write' ~object_directory tag =
+  let write' ~object_directory tag ~dry_run =
     let t = create ~object_directory in
-    write t tag
+    write t tag ~dry_run
   ;;
 end
 
@@ -388,7 +474,9 @@ let%expect_test "write known_size blob" =
     let t = Blob.Known_size.create_uninitialised ~object_directory in
     let reader = Object_reader.Expect_test_helpers.blob_reader Do_not_validate_sha1 in
     let write_blob blob =
-      let%bind () = Blob.Known_size.init_or_reset t ~length:(String.length blob) in
+      let%bind () =
+        Blob.Known_size.init_or_reset t ~length:(String.length blob) ~dry_run:false
+      in
       Blob.Known_size.append_data
         t
         (Bigstring.of_string blob)
@@ -432,7 +520,7 @@ let%expect_test "write unknown_size blob" =
     let t = Blob.Unknown_size.create_uninitialised ~object_directory in
     let reader = Object_reader.Expect_test_helpers.blob_reader Do_not_validate_sha1 in
     let write_blob blob =
-      let%bind () = Blob.Unknown_size.init_or_reset t in
+      let%bind () = Blob.Unknown_size.init_or_reset t ~dry_run:false in
       Blob.Unknown_size.append_data
         t
         (Bigstring.of_string blob)
@@ -478,7 +566,9 @@ let%expect_test "write commit" =
       let reader =
         Object_reader.Expect_test_helpers.commit_reader Do_not_validate_sha1
       in
-      let%bind sha1 = Commit.write t Commit_.For_testing.example_commit in
+      let%bind sha1 =
+        Commit.write t Commit_.For_testing.example_commit ~dry_run:false
+      in
       printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
       let%bind () = [%expect {| 3678df8b9ac798bf8a19b6477254b0ca24a20954 |}] in
       let expected_file_path =
@@ -547,6 +637,7 @@ let%expect_test "write commit" =
           ; gpg_signature = None
           ; description = "test commit\n"
           }
+          ~dry_run:false
       in
       printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
       let%bind () = [%expect {| d2ef8c710416f38bdf6e8487630486830edc6c7f |}] in
@@ -577,7 +668,7 @@ let%expect_test "write tree" =
   Expect_test_helpers.with_temp_dir (fun object_directory ->
     let t = Tree.create_uninitialised ~object_directory in
     let reader = Object_reader.Expect_test_helpers.tree_reader Do_not_validate_sha1 in
-    let%bind () = Tree.init_or_reset t in
+    let%bind () = Tree.init_or_reset t ~dry_run:false in
     Tree.write_tree_line
       t
       Non_executable_file
@@ -619,7 +710,7 @@ let%expect_test "write tree" =
             Received tree line: Directory d0b2476d5a6fc7bced4f6ef841b7e7022fad0493 c
             Received tree line: Link 68bdebaba7f41affa1aabce553c79818984181a9 d |}]
     in
-    let%bind () = Tree.init_or_reset t in
+    let%bind () = Tree.init_or_reset t ~dry_run:false in
     Tree.write_tree_line
       t
       Non_executable_file
@@ -649,7 +740,7 @@ let%expect_test "write tag" =
       let reader =
         Object_reader.Expect_test_helpers.tag_reader Do_not_validate_sha1
       in
-      let%bind sha1 = Tag.write t Tag_.For_testing.example_tag in
+      let%bind sha1 = Tag.write t Tag_.For_testing.example_tag ~dry_run:false in
       printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
       let%bind () = [%expect {| ac5f368017e73cac599c7dfd77bd36da2b816eaf |}] in
       let expected_file_path =
@@ -688,6 +779,7 @@ let%expect_test "write tag" =
                 }
           ; description = "test tag of a tag\n"
           }
+          ~dry_run:false
       in
       printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
       let%bind () = [%expect {| 5cddf48d3977bd7688e0fdaf8a307cc9e99ba238 |}] in
