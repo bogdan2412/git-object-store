@@ -230,9 +230,9 @@ let%expect_test "file blob object" =
         ~contents:"x\001K\202\201OR04dH\203,*.QH\203\204I\229\002\000=7\006\020"
     in
     let%bind () = read_file t ~file () in
-    let%bind () = [%expect {|
+    [%expect {|
       Blob size: 11
-      Blob chunk: first file |}] in
+      Blob chunk: first file |}];
     let t = Expect_test_helpers.blob_reader Validate_sha1 in
     let file = dir ^/ "git-object" in
     let%bind () =
@@ -255,7 +255,8 @@ let%expect_test "file blob object" =
       (raised (
         Unexpected_sha1
         (actual_sha1 303ff981c488b812b6215f7db7920dedb3b59d9a)
-        (expected_sha1 0000000000000000000000000000000000000000))) |}])
+        (expected_sha1 0000000000000000000000000000000000000000))) |}];
+    Deferred.unit)
 ;;
 
 let%expect_test "link blob object" =
@@ -268,7 +269,8 @@ let%expect_test "link blob object" =
     let%bind () = read_file t ~file () in
     [%expect {|
       Blob size: 3
-      Blob chunk: c/d |}])
+      Blob chunk: c/d |}];
+    Deferred.unit)
 ;;
 
 let%expect_test "commit object" =
@@ -288,15 +290,16 @@ let%expect_test "commit object" =
       let%bind () = read_file t ~file () in
       [%expect
         {|
-           ((tree b39daecaf9bc405deea72ff4dcbd5bb16613eb1f) (parents ())
-            (author
-             ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-              (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
-            (committer
-             ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-              (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
-            (encoding ()) (merge_tags ()) (gpg_signature ())
-            (description "test commit\n")) |}]))
+        ((tree b39daecaf9bc405deea72ff4dcbd5bb16613eb1f) (parents ())
+         (author
+          ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+           (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
+         (committer
+          ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+           (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
+         (encoding ()) (merge_tags ()) (gpg_signature ())
+         (description "test commit\n")) |}];
+      Deferred.unit))
 ;;
 
 let%expect_test "tree object" =
@@ -312,10 +315,11 @@ let%expect_test "tree object" =
     let%bind () = read_file t ~file () in
     [%expect
       {|
-         Received tree line: Non_executable_file 303ff981c488b812b6215f7db7920dedb3b59d9a a
-         Received tree line: Non_executable_file 1c59427adc4b205a270d8f810310394962e79a8b b
-         Received tree line: Directory d0b2476d5a6fc7bced4f6ef841b7e7022fad0493 c
-         Received tree line: Link 68bdebaba7f41affa1aabce553c79818984181a9 d |}])
+      Received tree line: Non_executable_file 303ff981c488b812b6215f7db7920dedb3b59d9a a
+      Received tree line: Non_executable_file 1c59427adc4b205a270d8f810310394962e79a8b b
+      Received tree line: Directory d0b2476d5a6fc7bced4f6ef841b7e7022fad0493 c
+      Received tree line: Link 68bdebaba7f41affa1aabce553c79818984181a9 d |}];
+    Deferred.unit)
 ;;
 
 let%expect_test "tag object" =
@@ -339,5 +343,6 @@ let%expect_test "tag object" =
             (tagger
              (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
                (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
-            (description "test tag\n")) |}]))
+            (description "test tag\n")) |}];
+      Deferred.unit))
 ;;

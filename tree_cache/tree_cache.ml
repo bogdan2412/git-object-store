@@ -465,23 +465,23 @@ let%test_module _ =
         let%bind () = random_adds t 100 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        let%bind () = [%expect {| 90ae00be13448bbdbcb751e067976c0811b20280 |}] in
+        [%expect {| 90ae00be13448bbdbcb751e067976c0811b20280 |}];
         let t = create object_store ~root:(Node.of_disk_hash sha1) in
         let%bind () = random_adds t 100 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        let%bind () = [%expect {| c871a5c3ac8bdd71738798b3c31d2f86ee951a05 |}] in
+        [%expect {| c871a5c3ac8bdd71738798b3c31d2f86ee951a05 |}];
         let t = create object_store ~root:(Node.of_disk_hash sha1) in
         let%bind () = random_adds t 100 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        let%bind () = [%expect {| adca120a86840e38a1f880d1dc89e3d9360809b1 |}] in
+        [%expect {| adca120a86840e38a1f880d1dc89e3d9360809b1 |}];
         let%bind () = random_removes t 50 in
         let%bind () = random_adds t 100 in
         let%bind () = random_removes t 20 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        let%bind () = [%expect {| aa72c4b8329d7027e72c6222fc1c5716d43f8703 |}] in
+        [%expect {| aa72c4b8329d7027e72c6222fc1c5716d43f8703 |}];
         let%bind () =
           Deferred.List.iter (Hashtbl.to_alist added) ~f:(fun (path, expected) ->
             let path = String.split ~on:'/' path in
@@ -512,13 +512,13 @@ let%test_module _ =
         let sha1_file = Sha1.Hex.of_string "62e79c807f27a8a3fbf315e252ea20720c9bc3f5" in
         let%bind () = add_file t ~path:[ "a"; "a" ] sha1_file Regular_file in
         pr ();
-        let%bind () = [%expect {| is_persisted false |}] in
+        [%expect {| is_persisted false |}];
         let%bind (_ : Sha1.Hex.t) = persist t in
         pr ();
-        let%bind () = [%expect {| is_persisted true |}] in
+        [%expect {| is_persisted true |}];
         let%bind () = add_file t ~path:[ "a"; "a" ] sha1_file Regular_file in
         pr ();
-        let%bind () = [%expect {| is_persisted true |}] in
+        [%expect {| is_persisted true |}];
         let%bind (_ : Sha1.Hex.t) = persist t in
         let%bind () =
           add_node
@@ -528,11 +528,11 @@ let%test_module _ =
                (Sha1.Hex.of_string "bb80b732a47e282685796d55bdf2034becf13ed7"))
         in
         pr ();
-        let%bind () = [%expect {| is_persisted true |}] in
+        [%expect {| is_persisted true |}];
         let%bind (_ : Sha1.Hex.t) = persist t in
         let%bind () = remove_path t ~path:[ "b" ] in
         pr ();
-        let%bind () = [%expect {| is_persisted true |}] in
+        [%expect {| is_persisted true |}];
         let%bind (_ : Sha1.Hex.t) = persist t in
         return ())
     ;;

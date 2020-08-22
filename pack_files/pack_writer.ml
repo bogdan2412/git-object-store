@@ -219,14 +219,12 @@ let%expect_test "write simple pack" =
              \219r\225\015\141\243\147\143\0218\215{\211\181^[\221\193\030k\148\250[P-\245\003@\1421G"
             "0000000000000000000000000000000000000000")
       in
-      let%bind () =
-        [%expect
-          {|
+      [%expect
+        {|
         (raised (
           Unexpected_sha1
           (actual_sha1 ac5f368017e73cac599c7dfd77bd36da2b816eaf)
-          (expected_sha1 0000000000000000000000000000000000000000))) |}]
-      in
+          (expected_sha1 0000000000000000000000000000000000000000))) |}];
       let%bind t = create ~pack_directory Validate_sha1 >>| ok_exn in
       let%bind () =
         add_object_exn
@@ -263,9 +261,7 @@ let%expect_test "write simple pack" =
       in
       let%bind pack_file = finalise_exn t in
       printf "%s\n" (Filename.basename pack_file);
-      let%bind () =
-        [%expect {| pack-b883b23ef64c73bd5909caf3596129cb0816f07d.pack |}]
-      in
+      [%expect {| pack-b883b23ef64c73bd5909caf3596129cb0816f07d.pack |}];
       let%bind () = Pack_reader.For_testing.print_out_pack_file pack_file in
       [%expect
         {|
@@ -313,5 +309,6 @@ let%expect_test "write simple pack" =
           ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
            (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
          (encoding ()) (merge_tags ()) (gpg_signature ())
-         (description "test commit\n")) |}]))
+         (description "test commit\n")) |}];
+      Deferred.unit))
 ;;

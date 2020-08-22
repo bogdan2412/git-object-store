@@ -1475,54 +1475,52 @@ let%expect_test "read pack" =
         Writer.save (dir ^/ pack_name ^ ".idx") ~contents:index_contents
       in
       let%bind () = For_testing.print_out_pack_file (dir ^/ pack_name) in
-      let%bind () =
-        [%expect
-          {|
-           items in pack: 5
-           idx |                                     sha1 | pack file offset | object length | object type
-             0 | 1c59427adc4b205a270d8f810310394962e79a8b |              300 |            12 | Blob
-             1 | 303ff981c488b812b6215f7db7920dedb3b59d9a |              280 |            11 | Blob
-             2 | ac5f368017e73cac599c7dfd77bd36da2b816eaf |               12 |           150 | Tag
-             3 | b39daecaf9bc405deea72ff4dcbd5bb16613eb1f |              321 |           115 | Tree
-             4 | d2ef8c710416f38bdf6e8487630486830edc6c7f |              150 |           202 | Commit
+      [%expect
+        {|
+        items in pack: 5
+        idx |                                     sha1 | pack file offset | object length | object type
+          0 | 1c59427adc4b205a270d8f810310394962e79a8b |              300 |            12 | Blob
+          1 | 303ff981c488b812b6215f7db7920dedb3b59d9a |              280 |            11 | Blob
+          2 | ac5f368017e73cac599c7dfd77bd36da2b816eaf |               12 |           150 | Tag
+          3 | b39daecaf9bc405deea72ff4dcbd5bb16613eb1f |              321 |           115 | Tree
+          4 | d2ef8c710416f38bdf6e8487630486830edc6c7f |              150 |           202 | Commit
 
-           1c59427adc4b205a270d8f810310394962e79a8b
-           Header data: Blob size 12
-           Blob size: 12
-           Blob chunk: "second file\n"
+        1c59427adc4b205a270d8f810310394962e79a8b
+        Header data: Blob size 12
+        Blob size: 12
+        Blob chunk: "second file\n"
 
-           303ff981c488b812b6215f7db7920dedb3b59d9a
-           Header data: Blob size 11
-           Blob size: 11
-           Blob chunk: "first file\n"
+        303ff981c488b812b6215f7db7920dedb3b59d9a
+        Header data: Blob size 11
+        Blob size: 11
+        Blob chunk: "first file\n"
 
-           ac5f368017e73cac599c7dfd77bd36da2b816eaf
-           Header data: Tag size 150
-           ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
-            (tag vtest)
-            (tagger
-             (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-               (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
-            (description "test tag\n"))
+        ac5f368017e73cac599c7dfd77bd36da2b816eaf
+        Header data: Tag size 150
+        ((object_sha1 fd0b2091596e649f6ca4521262c3a0cadb0d042e) (object_type Commit)
+         (tag vtest)
+         (tagger
+          (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+            (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+         (description "test tag\n"))
 
-           b39daecaf9bc405deea72ff4dcbd5bb16613eb1f
-           Header data: Tree size 115
-           Tree line: Non_executable_file 303ff981c488b812b6215f7db7920dedb3b59d9a a
-           Tree line: Non_executable_file 1c59427adc4b205a270d8f810310394962e79a8b b
-           Tree line: Directory d0b2476d5a6fc7bced4f6ef841b7e7022fad0493 c
-           Tree line: Link 68bdebaba7f41affa1aabce553c79818984181a9 d
+        b39daecaf9bc405deea72ff4dcbd5bb16613eb1f
+        Header data: Tree size 115
+        Tree line: Non_executable_file 303ff981c488b812b6215f7db7920dedb3b59d9a a
+        Tree line: Non_executable_file 1c59427adc4b205a270d8f810310394962e79a8b b
+        Tree line: Directory d0b2476d5a6fc7bced4f6ef841b7e7022fad0493 c
+        Tree line: Link 68bdebaba7f41affa1aabce553c79818984181a9 d
 
-           d2ef8c710416f38bdf6e8487630486830edc6c7f
-           Header data: Commit size 202
-           ((tree b39daecaf9bc405deea72ff4dcbd5bb16613eb1f) (parents ())
-            (author
-             ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-              (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
-            (committer
-             ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-              (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
-            (encoding ()) (merge_tags ()) (gpg_signature ())
-            (description "test commit\n")) |}]
-      in
+        d2ef8c710416f38bdf6e8487630486830edc6c7f
+        Header data: Commit size 202
+        ((tree b39daecaf9bc405deea72ff4dcbd5bb16613eb1f) (parents ())
+         (author
+          ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+           (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
+         (committer
+          ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
+           (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
+         (encoding ()) (merge_tags ()) (gpg_signature ())
+         (description "test commit\n")) |}];
       Deferred.unit))
 ;;
