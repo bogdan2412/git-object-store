@@ -212,6 +212,8 @@ let fopen path _flags =
       in
       let%bind reader =
         Monitor.protect
+          ~rest:`Raise
+          ~run:`Now
           (fun () ->
              let%bind () =
                Writer.with_file filename ~f:(fun writer ->

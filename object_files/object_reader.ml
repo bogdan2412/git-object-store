@@ -70,6 +70,8 @@ module Make (Parser : Parser) = struct
     in
     let%bind fd = Unix.openfile file ~mode:[ `Rdonly ] ~perm:0o000 in
     Monitor.protect
+      ~rest:`Raise
+      ~run:`Now
       ~finally:(fun () -> Fd.close fd)
       (fun () ->
          let%bind len =
@@ -166,9 +168,6 @@ module Raw = struct
 end
 
 module Expect_test_helpers = struct
-  let with_temp_dir = Expect_test_helpers.with_temp_dir
-  let show_raise_async = Expect_test_helpers.show_raise_async
-
   let blob_reader sha1_validation =
     create
       ~on_blob_size:(fun size -> printf "Blob size: %d\n" size)
@@ -221,7 +220,7 @@ module Expect_test_helpers = struct
 end
 
 let%expect_test "file blob object" =
-  Expect_test_helpers.with_temp_dir (fun dir ->
+  Expect_test_helpers_async.with_temp_dir (fun dir ->
     let t = Expect_test_helpers.blob_reader Do_not_validate_sha1 in
     let file = dir ^/ "git-object" in
     let%bind () =
@@ -241,7 +240,7 @@ let%expect_test "file blob object" =
         ~contents:"x\001K\202\201OR04dH\203,*.QH\203\204I\229\002\000=7\006\020"
     in
     let%bind () =
-      Expect_test_helpers.show_raise_async (fun () ->
+      Expect_test_helpers_async.show_raise_async (fun () ->
         read_file
           t
           ~file
@@ -260,7 +259,7 @@ let%expect_test "file blob object" =
 ;;
 
 let%expect_test "link blob object" =
-  Expect_test_helpers.with_temp_dir (fun dir ->
+  Expect_test_helpers_async.with_temp_dir (fun dir ->
     let t = Expect_test_helpers.blob_reader Do_not_validate_sha1 in
     let file = dir ^/ "git-object" in
     let%bind () =
@@ -274,7 +273,7 @@ let%expect_test "link blob object" =
 ;;
 
 let%expect_test "commit object" =
-  Expect_test_helpers.with_temp_dir (fun dir ->
+  Expect_test_helpers_async.with_temp_dir (fun dir ->
     Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
       let t = Expect_test_helpers.commit_reader Do_not_validate_sha1 in
       let file = dir ^/ "git-object" in
@@ -303,7 +302,7 @@ let%expect_test "commit object" =
 ;;
 
 let%expect_test "tree object" =
-  Expect_test_helpers.with_temp_dir (fun dir ->
+  Expect_test_helpers_async.with_temp_dir (fun dir ->
     let t = Expect_test_helpers.tree_reader Do_not_validate_sha1 in
     let file = dir ^/ "git-object" in
     let%bind () =
@@ -323,7 +322,7 @@ let%expect_test "tree object" =
 ;;
 
 let%expect_test "tag object" =
-  Expect_test_helpers.with_temp_dir (fun dir ->
+  Expect_test_helpers_async.with_temp_dir (fun dir ->
     Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
       let t = Expect_test_helpers.tag_reader Do_not_validate_sha1 in
       let file = dir ^/ "git-object" in

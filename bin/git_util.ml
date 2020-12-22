@@ -41,7 +41,7 @@ let read_git_object_file file =
       ~on_error:(fun error -> Error.raise error)
       sha1_validation
   in
-  Monitor.try_with_or_error ~extract_exn:true (fun () ->
+  Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
     match sha1 with
     | None ->
       let git_object_reader = create_git_object_reader Do_not_validate_sha1 in
@@ -111,7 +111,7 @@ let read_sha1_from_store ~object_directory sha1 =
   let%bind git_object_store =
     Git.Object_store.create ~object_directory ~max_concurrent_reads:1 Validate_sha1
   in
-  Monitor.try_with_or_error ~extract_exn:true (fun () ->
+  Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
     let open Deferred.Let_syntax in
     Git.Object_store.read_object
       git_object_store
@@ -133,14 +133,14 @@ let read_sha1_from_store ~object_directory sha1 =
 ;;
 
 let write_commit_from_file ~object_directory file ~dry_run =
-  Monitor.try_with_or_error ~extract_exn:true (fun () ->
+  Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
     let%bind commit = Reader.load_sexp_exn file [%of_sexp: Git.Commit.t] in
     let%map sha1 = Git.Object_writer.Commit.write' ~object_directory commit ~dry_run in
     printf !"%{Sha1.Hex}\n" (Sha1.Raw.to_hex sha1))
 ;;
 
 let write_tree_from_file ~object_directory file ~dry_run =
-  Monitor.try_with_or_error ~extract_exn:true (fun () ->
+  Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
     let tree_writer = Git.Object_writer.Tree.create_uninitialised ~object_directory in
     let%bind () = Git.Object_writer.Tree.init_or_reset tree_writer ~dry_run in
     let%bind raw_tree_lines = Reader.file_lines file in
@@ -178,7 +178,7 @@ let write_tree_from_file ~object_directory file ~dry_run =
 ;;
 
 let write_blob_from_file' ~object_directory file ~dry_run =
-  Monitor.try_with_or_error ~extract_exn:true (fun () ->
+  Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
     let%bind stat = Unix.stat file in
     let length = Int64.to_int_exn stat.size in
     let blob_writer =
@@ -212,7 +212,7 @@ let write_blob_from_file ~object_directory file ~dry_run =
 ;;
 
 let rec write_tree_from_directory' ~object_directory ~source_directory ~dry_run =
-  Monitor.try_with_or_error ~extract_exn:true (fun () ->
+  Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
     let tree_writer = Git.Object_writer.Tree.create_uninitialised ~object_directory in
     let%bind () = Git.Object_writer.Tree.init_or_reset tree_writer ~dry_run in
     let%bind entries = Sys.readdir source_directory in

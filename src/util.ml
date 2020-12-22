@@ -40,18 +40,18 @@ let object_directory_param =
           let rec loop path =
             let git_dir = path ^/ ".git" in
             match%bind
-              Monitor.try_with_or_error ~extract_exn:true (fun () ->
+              Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
                 Sys.is_directory_exn git_dir)
             with
             | true -> return (git_dir ^/ "objects")
             | false ->
               (match%bind
-                 Monitor.try_with_or_error ~extract_exn:true (fun () ->
+                 Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
                    Sys.is_file_exn git_dir)
                with
                | true ->
                  let%bind file_contents =
-                   Monitor.try_with_or_error ~extract_exn:true (fun () ->
+                   Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
                      Reader.file_contents git_dir)
                  in
                  (match String.chop_prefix ~prefix:"gitdir: " file_contents with

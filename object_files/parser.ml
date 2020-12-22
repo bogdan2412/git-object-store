@@ -857,7 +857,7 @@ let%expect_test "read blob, check sha1" =
   in
   let t = new_t () in
   append_data t blob_text ~pos:0 ~len:(Bigstring.length blob_text);
-  Expect_test_helpers.show_raise (fun () ->
+  Expect_test_helpers_core.show_raise (fun () ->
     finalise t (Sha1.Hex.of_string "0000000000000000000000000000000000000000"));
   printf !"%{sexp: _ t}\n" t;
   [%expect

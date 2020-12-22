@@ -409,7 +409,7 @@ let%test_module _ =
     ;;
 
     let%expect_test "Randomised test" =
-      Expect_test_helpers.with_temp_dir (fun object_directory ->
+      Expect_test_helpers_async.with_temp_dir (fun object_directory ->
         let%bind object_store =
           Object_store.Packed.create
             ~object_directory
@@ -499,7 +499,7 @@ let%test_module _ =
     ;;
 
     let%expect_test "is_persisted is maintained correctly" =
-      Expect_test_helpers.with_temp_dir (fun object_directory ->
+      Expect_test_helpers_async.with_temp_dir (fun object_directory ->
         let%bind object_store =
           Object_store.Packed.create
             ~object_directory

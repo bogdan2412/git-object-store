@@ -470,7 +470,7 @@ module Blob = struct
 end
 
 let%expect_test "write known_size blob" =
-  Expect_test_helpers.with_temp_dir (fun object_directory ->
+  Expect_test_helpers_async.with_temp_dir (fun object_directory ->
     let t = Blob.Known_size.create_uninitialised ~object_directory in
     let reader = Object_reader.Expect_test_helpers.blob_reader Do_not_validate_sha1 in
     let write_blob blob =
@@ -516,7 +516,7 @@ let%expect_test "write known_size blob" =
 ;;
 
 let%expect_test "write unknown_size blob" =
-  Expect_test_helpers.with_temp_dir (fun object_directory ->
+  Expect_test_helpers_async.with_temp_dir (fun object_directory ->
     let t = Blob.Unknown_size.create_uninitialised ~object_directory in
     let reader = Object_reader.Expect_test_helpers.blob_reader Do_not_validate_sha1 in
     let write_blob blob =
@@ -557,7 +557,7 @@ let%expect_test "write unknown_size blob" =
 ;;
 
 let%expect_test "write commit" =
-  Expect_test_helpers.with_temp_dir (fun object_directory ->
+  Expect_test_helpers_async.with_temp_dir (fun object_directory ->
     Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
       let t = Commit.create ~object_directory in
       let reader =
@@ -659,7 +659,7 @@ let%expect_test "write commit" =
 ;;
 
 let%expect_test "write tree" =
-  Expect_test_helpers.with_temp_dir (fun object_directory ->
+  Expect_test_helpers_async.with_temp_dir (fun object_directory ->
     let t = Tree.create_uninitialised ~object_directory in
     let reader = Object_reader.Expect_test_helpers.tree_reader Do_not_validate_sha1 in
     let%bind () = Tree.init_or_reset t ~dry_run:false in
@@ -726,7 +726,7 @@ let%expect_test "write tree" =
 ;;
 
 let%expect_test "write tag" =
-  Expect_test_helpers.with_temp_dir (fun object_directory ->
+  Expect_test_helpers_async.with_temp_dir (fun object_directory ->
     Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
       let t = Tag.create ~object_directory in
       let reader =

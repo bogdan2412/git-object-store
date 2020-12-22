@@ -486,19 +486,19 @@ let with_file file_path ~f =
   let open Deferred.Or_error.Let_syntax in
   with_resource
     ~create:(fun () ->
-      Monitor.try_with_or_error ~extract_exn:true (fun () ->
+      Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
         Unix.openfile ~mode:[ `Rdonly ] file_path))
     ~close_on_error:(fun fd ->
-      Monitor.try_with_or_error ~extract_exn:true (fun () -> Unix.close fd))
+      Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () -> Unix.close fd))
     ~f:(fun fd ->
       let%bind file_size =
-        Monitor.try_with_or_error ~extract_exn:true (fun () ->
+        Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
           let open Deferred.Let_syntax in
           let%map stat = Unix.fstat fd in
           Int64.to_int_exn stat.size)
       in
       let%bind file_mmap =
-        Monitor.try_with_or_error ~extract_exn:true (fun () ->
+        Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
           Fd.syscall_in_thread_exn ~name:"git-pack-mmap-file" fd (fun file_descr ->
             Bigstring_unix.map_file ~shared:false file_descr file_size))
       in
@@ -982,7 +982,7 @@ let index_pack ~pack_file =
   in
   with_file pack_file ~f:(fun (_ : Fd.t) (_pack_file_size : int) pack_file_mmap ->
     let items_in_pack = Bigstring.get_uint32_be pack_file_mmap ~pos:8 in
-    Monitor.try_with_or_error ~extract_exn:true (fun () ->
+    Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
       Index.Builder.index_pack ~pack_file ~pack_file_mmap ~items_in_pack))
 ;;
 
@@ -1466,7 +1466,7 @@ let%expect_test "read pack" =
      Z'\r\143\129\003\0169Ib\231\154\1390?\249\129\196\136\184\018\182!_}\183\146\r\237\179\181\157\154\172_6\128\023\231<\172Y\156}\253w\1896\218+\129n\175\179\157\174\202\249\188@]\238\167/\244\220\189[\177f\019\235\031\210\239\140q\004\022\243\139\223n\132\135c\004\134\131\014\220l\127\137\244h\223\248\191\197\209\135\177\130\255\231\214\159\229\193_\201O\000\000\001,\000\000\001\024\000\000\000\012\000\000\001A\000\000\000\150\184\131\178>\246Ls\189Y\t\202\243Ya)\203\b\022\240}|\216\027\2209\007\228\001\230\145\203R\132\166\189w\220\235\1864"
   in
   let pack_name = "pack-b883b23ef64c73bd5909caf3596129cb0816f07d" in
-  Expect_test_helpers.with_temp_dir (fun dir ->
+  Expect_test_helpers_async.with_temp_dir (fun dir ->
     Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
       let%bind () =
         Writer.save (dir ^/ pack_name ^ ".pack") ~contents:pack_contents

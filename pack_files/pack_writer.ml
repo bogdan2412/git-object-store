@@ -64,7 +64,7 @@ let create ~pack_directory sha1_validation =
     |> Deferred.return
   in
   let%map writer =
-    Monitor.try_with_or_error ~extract_exn:true (fun () ->
+    Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
       Writer.open_file temp_file_name)
   in
   Writer.write writer "PACK\000\000\000\002\000\000\000\000";
@@ -93,7 +93,7 @@ let create ~pack_directory sha1_validation =
 ;;
 
 let abort t =
-  Monitor.try_with_or_error ~extract_exn:true (fun () ->
+  Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
     let%bind () = Writer.close t.writer in
     Unix.unlink t.temp_file_name)
 ;;
@@ -122,7 +122,7 @@ let add_object_exn t ~object_file expected_sha1 =
   if Writer.is_closed t.writer
   then failwith "[add_object_exn] called on aborted pack writer";
   match%bind
-    Monitor.try_with_or_error ~extract_exn:true (fun () ->
+    Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
       add_object_exn t ~object_file expected_sha1)
   with
   | Ok () -> Deferred.unit
@@ -189,7 +189,9 @@ let finalise_exn t =
 ;;
 
 let finalise_exn t =
-  match%bind Monitor.try_with_or_error ~extract_exn:true (fun () -> finalise_exn t) with
+  match%bind
+    Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () -> finalise_exn t)
+  with
   | Ok result -> return result
   | Error error ->
     let%map abort_result = abort t in
@@ -199,7 +201,7 @@ let finalise_exn t =
 ;;
 
 let%expect_test "write simple pack" =
-  Expect_test_helpers.with_temp_dir (fun pack_directory ->
+  Expect_test_helpers_async.with_temp_dir (fun pack_directory ->
     Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
       let%bind t = create ~pack_directory Validate_sha1 >>| ok_exn in
       let temp_file_name = pack_directory ^/ "file" in
@@ -211,7 +213,7 @@ let%expect_test "write simple pack" =
           (Sha1.Hex.of_string expected_sha1)
       in
       let%bind () =
-        Expect_test_helpers.show_raise_async (fun () ->
+        Expect_test_helpers_async.show_raise_async (fun () ->
           add_object_exn
             t
             "x\156\029\205Q\n\

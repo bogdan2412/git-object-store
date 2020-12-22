@@ -53,7 +53,7 @@ let unexpected_raw_payload (_ : Bigstring.t) ~pos:(_ : int) ~len:(_ : int) =
 let create ~object_directory ~max_concurrent_reads sha1_validation =
   let open Deferred.Or_error.Let_syntax in
   let%bind packs =
-    Monitor.try_with_or_error ~extract_exn:true (fun () ->
+    Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
       let open Deferred.Let_syntax in
       let%bind () = Unix.mkdir ~p:() (object_directory ^/ "pack") in
       Sys.readdir (object_directory ^/ "pack"))
@@ -433,7 +433,11 @@ let with_on_disk_file t sha1 ~f =
        let%bind saved_sha1 = Object_writer.With_header.Known_size.finalise_exn writer in
        let saved_sha1 = Sha1.Raw.to_hex saved_sha1 in
        assert ([%compare.equal: Sha1.Hex.t] sha1 saved_sha1);
-       Monitor.protect (fun () -> f path) ~finally:(fun () -> Unix.unlink path))
+       Monitor.protect
+         ~rest:`Raise
+         ~run:`Now
+         (fun () -> f path)
+         ~finally:(fun () -> Unix.unlink path))
 ;;
 
 module Object_location = struct
