@@ -143,6 +143,11 @@ module Object_location : sig
   [@@deriving sexp_of]
 end
 
+val all_pack_files_in_store
+  :  'Sha1_validation t
+  -> (string * 'Sha1_validation Pack_reader.t) list
+
+val all_unpacked_objects_in_store : _ t -> string Sha1.Hex.Table.t Deferred.t
 val all_objects_in_store : _ t -> Object_location.t list Sha1.Hex.Table.t Deferred.t
 
 module Packed : sig
@@ -237,6 +242,7 @@ module Packed : sig
 
   module Object_location = Object_location
 
+  val all_unpacked_objects_in_store : t -> string Sha1.Hex.Table.t Deferred.t
   val all_objects_in_store : t -> Object_location.t list Sha1.Hex.Table.t Deferred.t
 end
 with type 'a non_packed := 'a t

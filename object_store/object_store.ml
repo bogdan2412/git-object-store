@@ -446,7 +446,9 @@ module Object_location = struct
   [@@deriving sexp_of]
 end
 
-let all_objects_in_store t =
+let all_pack_files_in_store t = t.packs
+
+let all_unpacked_objects_in_store t =
   let result = Sha1.Hex.Table.create () in
   let is_hex = function
     | '0' .. '9' | 'a' .. 'f' -> true
@@ -469,14 +471,22 @@ let all_objects_in_store t =
           | true ->
             if Int.( = ) (String.length file) 38 && String.for_all ~f:is_hex file
             then
-              Hashtbl.add_multi
+              Hashtbl.add_exn
                 result
                 ~key:(Sha1.Hex.of_string (first_child ^ file))
-                ~data:(Object_location.Unpacked_file path)
+                ~data:path
             else Log.Global.info "Unexpected file: %s" path))
       else (
         Log.Global.info "Unexpected file or directory: %s" path;
         Deferred.unit))
+  in
+  return result
+;;
+
+let all_objects_in_store t =
+  let%bind result = all_unpacked_objects_in_store t in
+  let result =
+    Hashtbl.map result ~f:(fun path -> [ Object_location.Unpacked_file path ])
   in
   List.iter t.packs ~f:(fun (pack_file, pack_reader) ->
     let items_in_pack = Pack_reader.items_in_pack pack_reader in
@@ -542,6 +552,10 @@ module Packed = struct
   let with_on_disk_file (T object_store) sha1 ~f = with_on_disk_file object_store sha1 ~f
 
   module Object_location = Object_location
+
+  let all_unpacked_objects_in_store (T object_store) =
+    all_unpacked_objects_in_store object_store
+  ;;
 
   let all_objects_in_store (T object_store) = all_objects_in_store object_store
 end
