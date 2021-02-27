@@ -1,6 +1,6 @@
 (** Library for manipulating a git object store via OCaml.
 
-    Copyright (C) 2020  Bogdan-Cristian Tataroiu
+    Copyright (C) 2020-2021  Bogdan-Cristian Tataroiu
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -139,7 +139,7 @@ let readdir _path handle =
   in
   let files = Tree_cache.Node.files loaded |> Map.keys in
   let directories = Tree_cache.Node.directories loaded |> Map.keys in
-  ("." :: ".." :: files) @ directories
+  "." :: ".." :: files @ directories
 ;;
 
 let releasedir _path _flags handle =
