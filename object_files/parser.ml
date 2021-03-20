@@ -911,7 +911,7 @@ let%expect_test "read commit" =
               (object_type Commit) (tag vtest)
               (tagger
                (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-                 (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+                 (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC+0))))
               (description "test tag"))))
            (gpg_signature
             ( "-----BEGIN PGP SIGNATURE-----\
@@ -951,7 +951,7 @@ let%expect_test "read commit" =
               (object_type Commit) (tag vtest)
               (tagger
                (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-                 (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+                 (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC+0))))
               (description "test tag"))))
            (gpg_signature
             ( "-----BEGIN PGP SIGNATURE-----\
@@ -1050,7 +1050,7 @@ let%expect_test "read tag" =
            (tag vtest)
            (tagger
             (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-              (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+              (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC+0))))
            (description "test tag\n"))
           ((raw ((data "") (total_payload_read 150) (state Done))) (state Reading_tag)) |}];
     let t = new_t () in
@@ -1066,7 +1066,7 @@ let%expect_test "read tag" =
            (tag vtest)
            (tagger
             (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-              (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+              (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC+0))))
            (description "test tag\n"))
           ((raw ((data "") (total_payload_read 150) (state Done))) (state Reading_tag)) |}])
 ;;
