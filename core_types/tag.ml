@@ -85,7 +85,7 @@ module For_testing = struct
             (tag vtest)
             (tagger
              (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-               (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+               (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC+0))))
             (description "test tag\n")) |}];
       let as_payload = format_as_git_object_payload example_tag in
       printf !"%s\n" as_payload;

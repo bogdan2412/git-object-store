@@ -1501,7 +1501,7 @@ let%expect_test "read pack" =
          (tag vtest)
          (tagger
           (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-            (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+            (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC+0))))
          (description "test tag\n"))
 
         b39daecaf9bc405deea72ff4dcbd5bb16613eb1f
@@ -1516,10 +1516,10 @@ let%expect_test "read pack" =
         ((tree b39daecaf9bc405deea72ff4dcbd5bb16613eb1f) (parents ())
          (author
           ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-           (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
+           (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC+0)))
          (committer
           ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-           (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
+           (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC+0)))
          (encoding ()) (merge_tags ()) (gpg_signature ())
          (description "test commit\n")) |}];
       Deferred.unit))

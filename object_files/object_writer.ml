@@ -595,7 +595,7 @@ let%expect_test "write commit" =
             (object_type Commit) (tag vtest)
             (tagger
              (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-               (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+               (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC+0))))
             (description "test tag"))))
          (gpg_signature
           ( "-----BEGIN PGP SIGNATURE-----\
@@ -649,10 +649,10 @@ let%expect_test "write commit" =
         ((tree b39daecaf9bc405deea72ff4dcbd5bb16613eb1f) (parents ())
          (author
           ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-           (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
+           (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC+0)))
          (committer
           ((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-           (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC)))
+           (timestamp (2019-01-05 07:26:44.000000000-05:00)) (zone UTC+0)))
          (encoding ()) (merge_tags ()) (gpg_signature ())
          (description "test commit\n")) |}];
       Deferred.unit))
@@ -750,7 +750,7 @@ let%expect_test "write tag" =
          (tag vtest)
          (tagger
           (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-            (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+            (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC+0))))
          (description "test tag\n")) |}];
       let%bind sha1 =
         Tag.write
@@ -787,7 +787,7 @@ let%expect_test "write tag" =
          (tag tag-test)
          (tagger
           (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-            (timestamp (2019-01-13 07:26:44.000000000-05:00)) (zone UTC))))
+            (timestamp (2019-01-13 07:26:44.000000000-05:00)) (zone UTC+0))))
          (description "test tag of a tag\n")) |}];
       Deferred.unit))
 ;;

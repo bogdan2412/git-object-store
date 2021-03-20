@@ -156,7 +156,7 @@ module For_testing = struct
             (object_type Commit) (tag vtest)
             (tagger
              (((name "Bogdan-Cristian Tataroiu") (email bogdan@example.com)
-               (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC))))
+               (timestamp (2019-01-13 10:15:27.000000000-05:00)) (zone UTC+0))))
             (description "test tag"))))
          (gpg_signature
           ( "-----BEGIN PGP SIGNATURE-----\
