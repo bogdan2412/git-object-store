@@ -60,7 +60,7 @@ let create ~pack_directory sha1_validation =
   let open Deferred.Or_error.Let_syntax in
   let%bind temp_file_name =
     Or_error.try_with (fun () ->
-      Filename.temp_file ~in_dir:pack_directory "pack-in-progress" "")
+      Filename_unix.temp_file ~in_dir:pack_directory "pack-in-progress" "")
     |> Deferred.return
   in
   let%map writer =

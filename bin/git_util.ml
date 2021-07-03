@@ -21,7 +21,7 @@ module Sha1 = Git.Sha1
 
 let read_git_object_file file =
   let sha1 =
-    let part2, part3 = Filename.split (Filename.realpath file) in
+    let part2, part3 = Filename.split (Filename_unix.realpath file) in
     let _part1, part2 = Filename.split part2 in
     Option.try_with (fun () -> Sha1.Hex.of_string (part2 ^ part3))
   in
@@ -290,7 +290,7 @@ let read_git_object_file_command =
   Command.async_or_error
     ~summary:"print git object file"
     [%map_open.Command
-      let file = anon ("FILE" %: Filename.arg_type) in
+      let file = anon ("FILE" %: Filename_unix.arg_type) in
       fun () -> read_git_object_file file]
 ;;
 
@@ -298,7 +298,7 @@ let read_git_pack_file_command =
   Command.async_or_error
     ~summary:"print git pack file"
     [%map_open.Command
-      let file = anon ("FILE" %: Filename.arg_type)
+      let file = anon ("FILE" %: Filename_unix.arg_type)
       and print_contents =
         flag
           "-print-contents"
@@ -312,7 +312,7 @@ let index_git_pack_file_command =
   Command.async_or_error
     ~summary:"generate index for git pack file"
     [%map_open.Command
-      let file = anon ("FILE" %: Filename.arg_type) in
+      let file = anon ("FILE" %: Filename_unix.arg_type) in
       fun () -> index_git_pack_file file]
 ;;
 
@@ -338,7 +338,7 @@ let write_commit_from_file_command =
        read commands"
     [%map_open.Command
       let object_directory = Git.Util.object_directory_param
-      and file = anon ("SEXP-FILE" %: Filename.arg_type)
+      and file = anon ("SEXP-FILE" %: Filename_unix.arg_type)
       and dry_run = dry_run_flag in
       fun () -> write_commit_from_file ~object_directory file ~dry_run]
 ;;
@@ -350,7 +350,7 @@ let write_tree_from_file_command =
        the read commands"
     [%map_open.Command
       let object_directory = Git.Util.object_directory_param
-      and file = anon ("FILE" %: Filename.arg_type)
+      and file = anon ("FILE" %: Filename_unix.arg_type)
       and dry_run = dry_run_flag in
       fun () -> write_tree_from_file ~object_directory file ~dry_run]
 ;;
@@ -360,7 +360,7 @@ let write_blob_from_file_command =
     ~summary:"create a blob given a file"
     [%map_open.Command
       let object_directory = Git.Util.object_directory_param
-      and file = anon ("FILE" %: Filename.arg_type)
+      and file = anon ("FILE" %: Filename_unix.arg_type)
       and dry_run = dry_run_flag in
       fun () -> write_blob_from_file ~object_directory file ~dry_run]
 ;;
@@ -370,7 +370,7 @@ let write_tree_from_directory_command =
     ~summary:"create a tree from a directory on disk and its contents"
     [%map_open.Command
       let object_directory = Git.Util.object_directory_param
-      and source_directory = anon ("SOURCE-DIRECTORY" %: Filename.arg_type)
+      and source_directory = anon ("SOURCE-DIRECTORY" %: Filename_unix.arg_type)
       and dry_run = dry_run_flag in
       fun () -> write_tree_from_directory ~object_directory ~source_directory ~dry_run]
 ;;
@@ -389,4 +389,4 @@ let command =
     ]
 ;;
 
-let () = Command.run command
+let () = Command_unix.run command

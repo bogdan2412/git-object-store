@@ -26,7 +26,7 @@ let object_directory_param =
     let directory =
       flag
         "-git-objects-directory"
-        (optional Filename.arg_type)
+        (optional Filename_unix.arg_type)
         ~doc:
           " Directory containig all git objects (defaults to <repository \
            root>/.git/objects/)"

@@ -161,7 +161,7 @@ let stats t ~path sha1 kind perm =
     |> Time.Span.to_sec
   in
   return
-    { Core.Unix.st_dev = 0
+    { Core_unix.st_dev = 0
     ; st_ino = 0
     ; st_kind = kind
     ; st_perm = perm
@@ -205,7 +205,7 @@ let fopen path _flags =
     | None -> raise (Unix.Unix_error (ENOENT, "fopen", path))
     | Some { sha1; kind = _ } ->
       let filename =
-        Filename.temp_file
+        Filename_unix.temp_file
           ~in_dir:(Object_store.object_directory t.object_store)
           "reading"
           "in_progress"
@@ -329,7 +329,7 @@ let () =
   Command.basic
     ~summary:""
     [%map_open.Command
-      let git_directory = anon ("GIT-DIRECTORY" %: Filename.arg_type)
+      let git_directory = anon ("GIT-DIRECTORY" %: Filename_unix.arg_type)
       and branch =
         flag
           "-branch-name"
@@ -348,22 +348,22 @@ let () =
           "-max-concurrent-reads"
           (optional_with_default 4 int)
           ~doc:" max concurrent reads from git object store"
-      and mountpoint = anon ("MOUNTPOINT" %: Filename.arg_type) in
+      and mountpoint = anon ("MOUNTPOINT" %: Filename_unix.arg_type) in
       fun () ->
         let argv = Sys.get_argv () in
-        let git_directory = Filename.realpath git_directory in
+        let git_directory = Filename_unix.realpath git_directory in
         (* Do some sanity checks before mounting. *)
-        if not (Core.Sys.is_directory_exn git_directory)
+        if not (Sys_unix.is_directory_exn git_directory)
         then
           raise_s [%message "GIT-DIRECTORY is not a directory" (git_directory : string)];
         let object_directory = object_directory ~git_directory in
-        if not (Core.Sys.is_directory_exn object_directory)
+        if not (Sys_unix.is_directory_exn object_directory)
         then
           raise_s
             [%message
               "GIT-DIRECTORY is missing an objects directory" (object_directory : string)];
         let branch_ref = branch_ref ~git_directory ~branch in
-        if not (Core.Sys.is_file_exn branch_ref)
+        if not (Sys_unix.is_file_exn branch_ref)
         then
           raise_s
             [%message
@@ -387,5 +387,5 @@ let () =
           ; readdir = wrap2 readdir "readdir"
           ; releasedir = wrap3 releasedir "releasedir"
           }]
-  |> Command.run
+  |> Command_unix.run
 ;;

@@ -21,8 +21,8 @@ open! Import
 type t =
   { name : string
   ; email : string
-  ; timestamp : Time_ns.t
-  ; zone : Time_ns.Zone.t
+  ; timestamp : Time_ns_unix.t
+  ; zone : Time_ns_unix.Zone.t
   }
 [@@deriving sexp]
 
@@ -35,7 +35,7 @@ let parse_git_time_zone_exn string =
     ((Char.to_int rest.[0] - Char.to_int '0') * 10)
     + (Char.to_int rest.[1] - Char.to_int '0')
   in
-  Time_ns.Zone.of_string (sprintf "UTC%c%d" sign hours)
+  Time_ns_unix.Zone.of_string (sprintf "UTC%c%d" sign hours)
 ;;
 
 let parse_exn line =

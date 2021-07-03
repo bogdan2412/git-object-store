@@ -21,8 +21,8 @@ open! Import
 type t =
   { name : string
   ; email : string
-  ; timestamp : Time_ns.t
-  ; zone : Time_ns.Zone.t
+  ; timestamp : Time_ns_unix.t
+  ; zone : Time_ns_unix.Zone.t
   }
 [@@deriving sexp]
 
