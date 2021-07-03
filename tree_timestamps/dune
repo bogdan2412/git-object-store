@@ -1,7 +1,7 @@
 (library
  (name git_tree_timestamps)
  (public_name git.tree_timestamps)
- (libraries async core git_object_store git_tree_cache)
+ (libraries async core_kernel.core git_object_store git_tree_cache)
  (inline_tests)
  (preprocess
   (pps ppx_jane)))

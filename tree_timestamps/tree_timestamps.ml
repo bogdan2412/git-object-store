@@ -66,7 +66,8 @@ module Timestamp_tree = struct
     match update_exn t path time with
     | exception _ ->
       raise_s
-        [%message "Path not pointing to a file" (path : string list) (time : Time_ns.t)]
+        [%message
+          "Path not pointing to a file" (path : string list) (time : Time_ns_unix.t)]
     | result -> result
   ;;
 
@@ -87,7 +88,7 @@ module Timestamp_tree = struct
     | exception _ ->
       raise_s
         [%message
-          "Path not pointing to a directory" (path : string list) (time : Time_ns.t)]
+          "Path not pointing to a directory" (path : string list) (time : Time_ns_unix.t)]
     | result -> result
   ;;
 end

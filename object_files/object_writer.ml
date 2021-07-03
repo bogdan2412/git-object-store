@@ -115,7 +115,7 @@ end = struct
       Deferred.unit
     | false ->
       let temp_file_name =
-        Filename.temp_file ~in_dir:t.object_directory "write-in-progress" ""
+        Filename_unix.temp_file ~in_dir:t.object_directory "write-in-progress" ""
       in
       let%map writer = Writer.open_file temp_file_name in
       State.set_initialised t.state ~writer ~temp_file_name
@@ -600,14 +600,14 @@ let%expect_test "write commit" =
           ; author =
               { name = "Bogdan-Cristian Tataroiu"
               ; email = "bogdan@example.com"
-              ; timestamp = Time_ns.of_string "2019-01-05 12:26:44.000000000Z"
-              ; zone = Time_ns.Zone.utc
+              ; timestamp = Time_ns_unix.of_string "2019-01-05 12:26:44.000000000Z"
+              ; zone = Time_ns_unix.Zone.utc
               }
           ; committer =
               { name = "Bogdan-Cristian Tataroiu"
               ; email = "bogdan@example.com"
-              ; timestamp = Time_ns.of_string "2019-01-05 12:26:44.000000000Z"
-              ; zone = Time_ns.Zone.utc
+              ; timestamp = Time_ns_unix.of_string "2019-01-05 12:26:44.000000000Z"
+              ; zone = Time_ns_unix.Zone.utc
               }
           ; encoding = None
           ; merge_tags = []
@@ -746,8 +746,8 @@ let%expect_test "write tag" =
               Some
                 { name = "Bogdan-Cristian Tataroiu"
                 ; email = "bogdan@example.com"
-                ; timestamp = Time_ns.of_string "2019-01-13 12:26:44.000000000Z"
-                ; zone = Time_ns.Zone.utc
+                ; timestamp = Time_ns_unix.of_string "2019-01-13 12:26:44.000000000Z"
+                ; zone = Time_ns_unix.Zone.utc
                 }
           ; description = "test tag of a tag\n"
           }
