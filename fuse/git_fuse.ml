@@ -139,7 +139,7 @@ let readdir _path handle =
   in
   let files = Tree_cache.Node.files loaded |> Map.keys in
   let directories = Tree_cache.Node.directories loaded |> Map.keys in
-  "." :: ".." :: files @ directories
+  ("." :: ".." :: files) @ directories
 ;;
 
 let releasedir _path _flags handle =
