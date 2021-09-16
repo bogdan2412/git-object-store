@@ -627,7 +627,7 @@ module Index = struct
           ; delta_children =
               (List.map delta_children ~f:(fun delta_child -> delta_child.pack_pos) : int
                                                                                         list)
-          ; contents : Bigstring.t sexp_option
+          ; contents : (Bigstring.t option[@sexp.option])
           }]
       ;;
 
