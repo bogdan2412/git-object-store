@@ -43,11 +43,13 @@ module Node0 = struct
         { sha1 : Sha1.Hex.t
         ; directories : t String.Map.t
         ; files : File.t String.Map.t
+        ; submodules : Sha1.Hex.t String.Map.t
         }
         -> [ `Loaded ] state
     | Loaded_and_not_persisted :
         { directories : t String.Map.t
         ; files : File.t String.Map.t
+        ; submodules : Sha1.Hex.t String.Map.t
         }
         -> [ `Loaded ] state
 
@@ -59,7 +61,10 @@ module Node0 = struct
     { state =
         T
           (Loaded_and_not_persisted
-             { directories = String.Map.empty; files = String.Map.empty })
+             { directories = String.Map.empty
+             ; files = String.Map.empty
+             ; submodules = String.Map.empty
+             })
     }
   ;;
 
@@ -73,6 +78,11 @@ module Node0 = struct
   let files = function
     | Loaded_and_persisted { files; _ } -> files
     | Loaded_and_not_persisted { files; _ } -> files
+  ;;
+
+  let submodules = function
+    | Loaded_and_persisted { submodules; _ } -> submodules
+    | Loaded_and_not_persisted { submodules; _ } -> submodules
   ;;
 
   let sha1 t =
@@ -123,14 +133,26 @@ module Node = struct
     | T (Not_loaded sha1) ->
       let loaded_deferred =
         Hashtbl.find_or_add t.loaded sha1 ~default:(fun () ->
+          let entry_names = ref String.Set.empty in
           let files = ref String.Map.empty in
           let directories = ref String.Map.empty in
+          let submodules = ref String.Map.empty in
           let%map () =
             Object_store.Packed.read_tree
               t.object_store
               sha1
               ~on_tree_line:(fun mode entry_sha1 ~name ->
                 let entry_sha1 = Sha1.Raw.Volatile.to_hex entry_sha1 in
+                (match Set.mem !entry_names name with
+                 | true ->
+                   raise_s
+                     [%message
+                       "Naming conflict"
+                         ~tree_sha1:(sha1 : Sha1.Hex.t)
+                         ~duplicate_entry_name:(name : string)
+                         ~duplicate_entry_sha1:(entry_sha1 : Sha1.Hex.t)
+                         ~duplicate_entry_type:(mode : Git_core_types.File_mode.t)]
+                 | false -> entry_names := Set.add !entry_names name);
                 match mode with
                 | Non_executable_file | Executable_file | Link ->
                   let file =
@@ -153,13 +175,14 @@ module Node = struct
                        ~key:name
                        ~data:{ state = T (Not_loaded entry_sha1) }
                 | Git_submodule ->
-                  Log.Global.error_s
-                    [%message
-                      "Git submodules are not supported by tree cache"
-                        (sha1 : Sha1.Hex.t)
-                        (name : string)])
+                  submodules := Map.add_exn !submodules ~key:name ~data:entry_sha1)
           in
-          Loaded_and_persisted { sha1; files = !files; directories = !directories })
+          Loaded_and_persisted
+            { sha1
+            ; files = !files
+            ; directories = !directories
+            ; submodules = !submodules
+            })
       in
       node.state <- T (Loading (sha1, loaded_deferred));
       upon loaded_deferred (fun loaded -> node.state <- T loaded);
@@ -179,10 +202,42 @@ module Node = struct
     | T (Not_loaded sha1) -> return sha1
     | T (Loaded_and_persisted { sha1; _ }) -> return sha1
     | T (Loading (sha1, _)) -> return sha1
-    | T (Loaded_and_not_persisted { files; directories }) ->
-      let%bind directory_sha1s =
-        Deferred.Map.map directories ~f:(fun node -> persist' t node witness)
-        >>| Map.to_alist
+    | T (Loaded_and_not_persisted { files; directories; submodules }) ->
+      let%bind directory_lines =
+        Deferred.Map.map directories ~f:(fun node ->
+          let%map sha1 = persist' t node witness in
+          sha1, Git_core_types.File_mode.Directory)
+      in
+      let file_lines =
+        Map.map files ~f:(fun { sha1; kind } ->
+          ( sha1
+          , match kind with
+          | Regular_file -> Git_core_types.File_mode.Non_executable_file
+          | Executable_file -> Executable_file
+          | Link -> Link ))
+      in
+      let submodule_lines =
+        Map.map submodules ~f:(fun sha1 -> sha1, Git_core_types.File_mode.Git_submodule)
+      in
+      let all_lines =
+        Map.merge directory_lines file_lines ~f:(fun ~key:name -> function
+          | `Both (dir, file) ->
+            raise_s
+              [%message
+                "naming conflict"
+                  (name : string)
+                  (dir : Sha1.Hex.t * Git_core_types.File_mode.t)
+                  (file : Sha1.Hex.t * Git_core_types.File_mode.t)]
+          | `Left value | `Right value -> Some value)
+        |> Map.merge submodule_lines ~f:(fun ~key:name -> function
+          | `Both (dir_or_file, submodule) ->
+            raise_s
+              [%message
+                "naming conflict"
+                  (name : string)
+                  (dir_or_file : Sha1.Hex.t * Git_core_types.File_mode.t)
+                  (submodule : Sha1.Hex.t * Git_core_types.File_mode.t)]
+          | `Left value | `Right value -> Some value)
       in
       let git_tree_writer =
         Tree_writer.create_uninitialised
@@ -190,22 +245,12 @@ module Node = struct
       in
       let%bind () = Tree_writer.init_or_reset git_tree_writer ~dry_run:false in
       let sha1_raw = Sha1.Raw.Volatile.create () in
-      List.iter directory_sha1s ~f:(fun (directory, sha1) ->
+      Map.iteri all_lines ~f:(fun ~key:name ~data:(sha1, kind) ->
         Sha1.Raw.Volatile.of_hex sha1 sha1_raw;
-        Tree_writer.write_tree_line' git_tree_writer Directory sha1_raw ~name:directory);
-      Map.iteri files ~f:(fun ~key:file ~data:{ sha1; kind } ->
-        Sha1.Raw.Volatile.of_hex sha1 sha1_raw;
-        Tree_writer.write_tree_line'
-          git_tree_writer
-          (match kind with
-           | Regular_file -> Non_executable_file
-           | Executable_file -> Executable_file
-           | Link -> Link)
-          sha1_raw
-          ~name:file);
+        Tree_writer.write_tree_line' git_tree_writer kind sha1_raw ~name);
       let%bind sha1_raw = Tree_writer.finalise git_tree_writer in
       let sha1 = Sha1.Raw.to_hex sha1_raw in
-      let state = Loaded_and_persisted { sha1; files; directories } in
+      let state = Loaded_and_persisted { sha1; files; directories; submodules } in
       let%map state =
         Hashtbl.find_or_add t.loaded sha1 ~default:(fun () -> return state)
       in
@@ -229,6 +274,20 @@ module Node = struct
        | None -> return None)
   ;;
 
+  let rec get_submodule t node ~path =
+    let%bind state = ensure_loaded t node in
+    match path with
+    | [] -> return None
+    | [ submodule ] ->
+      (match Map.find (submodules state) submodule with
+       | Some sha1 -> return (Some sha1)
+       | None -> return None)
+    | directory :: rest ->
+      (match Map.find (directories state) directory with
+       | Some node -> get_submodule t node ~path:rest
+       | None -> return None)
+  ;;
+
   let rec get_node t node ~path =
     let%bind state = ensure_loaded t node in
     match path with
@@ -239,29 +298,64 @@ module Node = struct
        | None -> return None)
   ;;
 
-  let rec add_file' t node ~path sha1 kind (witness : Sequencer_witness.t) =
+  let add_entry_to_directory t node ~name entry =
+    let%bind state = ensure_loaded t node in
+    let unchanged =
+      match entry with
+      | `Directory new_node ->
+        let old_directory_sha1 =
+          Map.find (directories state) name |> Option.bind ~f:sha1
+        in
+        let new_directory_sha1 = sha1 new_node in
+        (match old_directory_sha1, new_directory_sha1 with
+         | Some old_sha1, Some new_sha1 when [%compare.equal: Sha1.Hex.t] old_sha1 new_sha1
+           -> true
+         | _ -> false)
+      | `File { File.sha1 = new_sha1; _ } ->
+        (match Map.find (files state) name with
+         | Some { sha1 = old_sha1; _ } when [%compare.equal: Sha1.Hex.t] old_sha1 new_sha1
+           -> true
+         | _ -> false)
+      | `Submodule new_sha1 ->
+        (match Map.find (submodules state) name with
+         | Some old_sha1 when [%compare.equal: Sha1.Hex.t] old_sha1 new_sha1 -> true
+         | _ -> false)
+    in
+    match unchanged with
+    | true -> return node
+    | false ->
+      let files = Map.remove (files state) name in
+      let directories = Map.remove (directories state) name in
+      let submodules = Map.remove (submodules state) name in
+      let state =
+        Loaded_and_not_persisted
+          { files =
+              (match entry with
+               | `File data -> Map.add_exn files ~key:name ~data
+               | _ -> files)
+          ; directories =
+              (match entry with
+               | `Directory data -> Map.add_exn directories ~key:name ~data
+               | _ -> directories)
+          ; submodules =
+              (match entry with
+               | `Submodule data -> Map.add_exn submodules ~key:name ~data
+               | _ -> submodules)
+          }
+      in
+      return { state = T state }
+  ;;
+
+  let rec set_path_to_entry t node ~path entry (witness : Sequencer_witness.t) =
     match path with
     | [] -> failwith "Empty path"
-    | [ file ] ->
-      let%bind state = ensure_loaded t node in
-      (match Map.find (files state) file with
-       | Some { sha1 = old_sha1; _ } when [%compare.equal: Sha1.Hex.t] old_sha1 sha1 ->
-         (* File already exists and is not being changed. *)
-         return node
-       | None | Some _ ->
-         let state =
-           Loaded_and_not_persisted
-             { files = Map.set (files state) ~key:file ~data:{ sha1; kind }
-             ; directories = directories state
-             }
-         in
-         return { state = T state })
+    | [ name ] -> add_entry_to_directory t node ~name entry
     | directory :: drest ->
       let%bind state = ensure_loaded t node in
       let%bind new_directory =
         match Map.find (directories state) directory with
-        | Some node -> add_file' t node ~path:drest sha1 kind witness
-        | None -> add_file' t (empty ()) ~path:drest sha1 kind witness
+        | Some node -> set_path_to_entry t node ~path:drest entry witness
+        | None -> set_path_to_entry t (empty ()) ~path:drest entry witness
       in
       (match is_persisted new_directory with
        | true -> (* Child directory was not changed *) return node
@@ -270,9 +364,14 @@ module Node = struct
            Loaded_and_not_persisted
              { files = files state
              ; directories = Map.set (directories state) ~key:directory ~data:new_directory
+             ; submodules = submodules state
              }
          in
          return { state = T state })
+  ;;
+
+  let add_file' t node ~path sha1 kind witness =
+    set_path_to_entry t node ~path (`File { File.sha1; kind }) witness
   ;;
 
   let add_file t node ~path sha1 kind =
@@ -280,47 +379,8 @@ module Node = struct
       add_file' t node ~path sha1 kind witness)
   ;;
 
-  let rec add_node' t node ~path new_node (witness : Sequencer_witness.t) =
-    match path with
-    | [] -> failwith "Empty path"
-    | [ directory ] ->
-      let%bind state = ensure_loaded t node in
-      let old_directory_sha1 =
-        Map.find (directories state) directory |> Option.bind ~f:sha1
-      in
-      let new_directory_sha1 = sha1 new_node in
-      (match old_directory_sha1, new_directory_sha1 with
-       | Some old_sha1, Some new_sha1 when [%compare.equal: Sha1.Hex.t] old_sha1 new_sha1
-         ->
-         (* Directory already exists and is not being changed. *)
-         return node
-       | _ ->
-         let state =
-           Loaded_and_not_persisted
-             { files = files state
-             ; directories = Map.set (directories state) ~key:directory ~data:new_node
-             }
-         in
-         return { state = T state })
-    | directory :: drest ->
-      let%bind state = ensure_loaded t node in
-      let%bind new_directory =
-        match Map.find (directories state) directory with
-        | Some node -> add_node' t node ~path:drest new_node witness
-        | None -> add_node' t (empty ()) ~path:drest new_node witness
-      in
-      (match is_persisted new_directory with
-       | true ->
-         (* Child directory was not changed *)
-         return node
-       | false ->
-         let state =
-           Loaded_and_not_persisted
-             { files = files state
-             ; directories = Map.set (directories state) ~key:directory ~data:new_directory
-             }
-         in
-         return { state = T state })
+  let add_node' t node ~path new_node witness =
+    set_path_to_entry t node ~path (`Directory new_node) witness
   ;;
 
   let add_node t node ~path new_node =
@@ -328,19 +388,33 @@ module Node = struct
       add_node' t node ~path new_node witness)
   ;;
 
+  let add_submodule' t node ~path sha1 witness =
+    set_path_to_entry t node ~path (`Submodule sha1) witness
+  ;;
+
+  let add_submodule t node ~path sha1 =
+    Throttle.enqueue t.mutation_sequencer (fun witness ->
+      add_submodule' t node ~path sha1 witness)
+  ;;
+
   let rec remove_path' t node ~path (witness : Sequencer_witness.t) =
     match path with
     | [] -> return None
     | [ leaf ] ->
       let%bind state = ensure_loaded t node in
-      (match Map.find (files state) leaf, Map.find (directories state) leaf with
-       | None, None ->
+      (match
+         ( Map.find (files state) leaf
+         , Map.find (directories state) leaf
+         , Map.find (submodules state) leaf )
+       with
+       | None, None, None ->
          (* Path does not exist, node remains unchanged. *) return (Some node)
        | _ ->
          let state =
            Loaded_and_not_persisted
-             { files = Map.change (files state) leaf ~f:(Fn.const None)
-             ; directories = Map.change (directories state) leaf ~f:(Fn.const None)
+             { files = Map.remove (files state) leaf
+             ; directories = Map.remove (directories state) leaf
+             ; submodules = Map.remove (submodules state) leaf
              }
          in
          return (Some { state = T state }))
@@ -360,6 +434,7 @@ module Node = struct
                 { files = files state
                 ; directories =
                     Map.change (directories state) directory ~f:(Fn.const new_directory)
+                ; submodules = submodules state
                 }
             in
             return (Some { state = T state })))
@@ -373,6 +448,7 @@ end
 
 let get_file t ~path = Node.get_file t t.root ~path
 let get_node t ~path = Node.get_node t t.root ~path
+let get_submodule t ~path = Node.get_submodule t t.root ~path
 
 let add_file t ~path sha1 kind =
   Throttle.enqueue t.mutation_sequencer (fun witness ->
@@ -383,6 +459,12 @@ let add_file t ~path sha1 kind =
 let add_node t ~path node =
   Throttle.enqueue t.mutation_sequencer (fun witness ->
     let%map root = Node.add_node' t t.root ~path node witness in
+    t.root <- root)
+;;
+
+let add_submodule t ~path sha1 =
+  Throttle.enqueue t.mutation_sequencer (fun witness ->
+    let%map root = Node.add_submodule' t t.root ~path sha1 witness in
     t.root <- root)
 ;;
 
