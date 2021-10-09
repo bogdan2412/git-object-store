@@ -37,11 +37,13 @@ module Node : sig
   val ensure_loaded : tree_cache -> t -> [ `Loaded ] state Deferred.t
   val directories : [ `Loaded ] state -> t String.Map.t
   val files : [ `Loaded ] state -> File.t String.Map.t
+  val submodules : [ `Loaded ] state -> Sha1.Hex.t String.Map.t
 
   (** Path accessors *)
 
   val get_file : tree_cache -> t -> path:string list -> File.t option Deferred.t
   val get_node : tree_cache -> t -> path:string list -> t option Deferred.t
+  val get_submodule : tree_cache -> t -> path:string list -> Sha1.Hex.t option Deferred.t
 
   (** Mutation methods *)
 
@@ -54,6 +56,7 @@ module Node : sig
     -> t Deferred.t
 
   val add_node : tree_cache -> t -> path:string list -> t -> t Deferred.t
+  val add_submodule : tree_cache -> t -> path:string list -> Sha1.Hex.t -> t Deferred.t
   val remove_path : tree_cache -> t -> path:string list -> t option Deferred.t
 
   (** Persistent storage *)
@@ -75,11 +78,13 @@ val root : t -> Node.t
 
 val get_file : t -> path:string list -> File.t option Deferred.t
 val get_node : t -> path:string list -> Node.t option Deferred.t
+val get_submodule : t -> path:string list -> Sha1.Hex.t option Deferred.t
 
 (** Mutation methods *)
 
 val add_file : t -> path:string list -> Sha1.Hex.t -> File.Kind.t -> unit Deferred.t
 val add_node : t -> path:string list -> Node.t -> unit Deferred.t
+val add_submodule : t -> path:string list -> Sha1.Hex.t -> unit Deferred.t
 val remove_path : t -> path:string list -> unit Deferred.t
 
 (** Persistent storage *)
