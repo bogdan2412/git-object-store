@@ -275,6 +275,12 @@ let%expect_test "write simple pack" =
           2 | ac5f368017e73cac599c7dfd77bd36da2b816eaf |               12 |           150 | Tag
           3 | b39daecaf9bc405deea72ff4dcbd5bb16613eb1f |              321 |           115 | Tree
           4 | d2ef8c710416f38bdf6e8487630486830edc6c7f |              150 |           202 | Commit
+        pack order | index | pack file offset
+           0  0  0 |  2  2 |               12
+           1  1  1 |  4  4 |              150
+           2  2  2 |  1  1 |              280
+           3  3  3 |  0  0 |              300
+           4  4  4 |  3  3 |              321
 
         1c59427adc4b205a270d8f810310394962e79a8b
         Header data: Blob size 12

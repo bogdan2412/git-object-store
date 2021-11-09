@@ -383,7 +383,7 @@ let size = Size.impl
 
 module For_testing = struct
   let print_out_pack_file pack_file =
-    let%map t = create ~pack_file Validate_sha1 >>| ok_exn in
+    let%bind t = create ~pack_file Validate_sha1 >>| ok_exn in
     printf "items in pack: %d\n" t.items_in_pack;
     printf "idx | %40s | pack file offset | object length | object type\n" "sha1";
     for index = 0 to t.items_in_pack - 1 do
@@ -394,6 +394,33 @@ module For_testing = struct
         (pack_file_object_offset t ~index)
         (object_length t ~index)
         (object_type t ~index |> Pack_object_type.packed_to_flat)
+    done;
+    let%map reverse_index = Reverse_index_reader.open_existing t.index >>| ok_exn in
+    printf "pack order | index | pack file offset\n";
+    for pack_order = 0 to t.items_in_pack - 1 do
+      let index = Reverse_index_reader.index_of_pack_order reverse_index ~pack_order in
+      let pack_file_offset =
+        Reverse_index_reader.pack_file_offset_of_pack_order reverse_index ~pack_order
+      in
+      let pack_order_index_round_trip =
+        Reverse_index_reader.pack_order_of_index reverse_index ~index
+      in
+      let pack_order_offset_round_trip =
+        Reverse_index_reader.pack_order_of_pack_file_offset
+          reverse_index
+          ~pack_file_offset
+      in
+      let index_offset_round_trip =
+        Reverse_index_reader.index_of_pack_file_offset reverse_index ~pack_file_offset
+      in
+      printf
+        "%4d %2d %2d | %2d %2d | %16d \n"
+        pack_order
+        pack_order_index_round_trip
+        pack_order_offset_round_trip
+        index
+        index_offset_round_trip
+        pack_file_offset
     done;
     for index = 0 to t.items_in_pack - 1 do
       printf !"\n%{Sha1.Hex}\n" (Sha1.Raw.Volatile.to_hex (sha1 t ~index));
@@ -470,6 +497,12 @@ let%expect_test "read pack" =
           2 | ac5f368017e73cac599c7dfd77bd36da2b816eaf |               12 |           150 | Tag
           3 | b39daecaf9bc405deea72ff4dcbd5bb16613eb1f |              321 |           115 | Tree
           4 | d2ef8c710416f38bdf6e8487630486830edc6c7f |              150 |           202 | Commit
+        pack order | index | pack file offset
+           0  0  0 |  2  2 |               12
+           1  1  1 |  4  4 |              150
+           2  2  2 |  1  1 |              280
+           3  3  3 |  0  0 |              300
+           4  4  4 |  3  3 |              321
 
         1c59427adc4b205a270d8f810310394962e79a8b
         Header data: Blob size 12
