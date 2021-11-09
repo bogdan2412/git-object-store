@@ -127,24 +127,24 @@ end = struct
 
     let unit_in_pack_file : unit Pack_reader.t -> index:int -> unit t =
       let value = In_pack_file { pack = Obj.magic (); index = 0 } in
-      fun pack ~index ->
-        (match value with
-         | In_pack_file record ->
-           record.pack <- pack;
-           record.index <- index
-         | _ -> assert false);
-        value
+      match value with
+      | In_pack_file record ->
+        fun pack ~index ->
+          record.pack <- pack;
+          record.index <- index;
+          value
+      | _ -> assert false
     ;;
 
     let sha1_in_pack_file : Sha1.Hex.t Pack_reader.t -> index:int -> Sha1.Hex.t t =
       let value = In_pack_file { pack = Obj.magic (); index = 0 } in
-      fun pack ~index ->
-        (match value with
-         | In_pack_file record ->
-           record.pack <- pack;
-           record.index <- index
-         | _ -> assert false);
-        value
+      match value with
+      | In_pack_file record ->
+        fun pack ~index ->
+          record.pack <- pack;
+          record.index <- index;
+          value
+      | _ -> assert false
     ;;
 
     let in_pack_file
@@ -161,20 +161,22 @@ end = struct
 
     let unit_unpacked_file_if_exists : string -> unit t =
       let value = Unpacked_file_if_exists { path = "" } in
-      fun path ->
-        (match value with
-         | Unpacked_file_if_exists record -> record.path <- path
-         | _ -> assert false);
-        value
+      match value with
+      | Unpacked_file_if_exists record ->
+        fun path ->
+          record.path <- path;
+          value
+      | _ -> assert false
     ;;
 
     let sha1_unpacked_file_if_exists : string -> Sha1.Hex.t t =
       let value = Unpacked_file_if_exists { path = "" } in
-      fun path ->
-        (match value with
-         | Unpacked_file_if_exists record -> record.path <- path
-         | _ -> assert false);
-        value
+      match value with
+      | Unpacked_file_if_exists record ->
+        fun path ->
+          record.path <- path;
+          value
+      | _ -> assert false
     ;;
 
     let unpacked_file_if_exists (type a) (sha1_validation : a Sha1_validation.t) path

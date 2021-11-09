@@ -34,11 +34,12 @@ module Volatile = struct
 
   let some =
     let value = Some { index = -1 } in
-    fun index ->
-      (match value with
-       | Some record -> record.index <- index
-       | None -> assert false);
-      value
+    match value with
+    | Some record ->
+      fun index ->
+        record.index <- index;
+        value
+    | None -> assert false
   ;;
 
   let index_exn = function
