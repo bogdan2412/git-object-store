@@ -184,7 +184,8 @@ let finalise_exn t =
       (sprintf !"pack-%{Sha1.Hex.Volatile}.pack" (Sha1.Compute.get_hex sha1))
   in
   let%bind () = Sys.rename t.temp_file_name file_name in
-  let%bind () = Pack_reader.index_pack ~pack_file:file_name >>| ok_exn in
+  let%bind () = Pack_reader.write_pack_index ~pack_file:file_name >>| ok_exn in
+  let%bind () = Pack_reader.write_pack_reverse_index ~pack_file:file_name >>| ok_exn in
   return file_name
 ;;
 

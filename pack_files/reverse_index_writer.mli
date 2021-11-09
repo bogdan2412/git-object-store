@@ -19,8 +19,4 @@ open! Core
 open! Async
 open! Import
 
-val write_index
-  :  pack_file:string
-  -> pack_file_mmap:Bigstring.t
-  -> items_in_pack:int
-  -> unit Deferred.t
+val write_reverse_index : Index_reader.t -> unit Deferred.t

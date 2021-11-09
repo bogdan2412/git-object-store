@@ -43,7 +43,7 @@ let open_existing ~pack_file ~pack_file_mmap ~pack_file_size ~items_in_pack =
         else Ok ()
       in
       let%bind () =
-        if Bigstring.get_uint32_le file_mmap ~pos:0 <> 1666151679
+        if Bigstring.get_uint32_be file_mmap ~pos:0 <> 0xff744f63
         then Or_error.error_s [%sexp "Expected idx signature"]
         else Ok ()
       in
@@ -75,6 +75,21 @@ let open_existing ~pack_file ~pack_file_mmap ~pack_file_size ~items_in_pack =
         }
     in
     Deferred.return result)
+;;
+
+let index_file t = t.index_file
+let items_in_pack t = t.items_in_pack
+
+let pack_sha1 =
+  let result = Sha1.Raw.Volatile.create () in
+  fun t ->
+    Bigstring.To_bytes.blit
+      ~src:t.file_mmap
+      ~src_pos:(t.file_size - (Sha1.Raw.length * 2))
+      ~dst:(Sha1.Raw.Volatile.bytes result)
+      ~dst_pos:0
+      ~len:Sha1.Raw.length;
+    result
 ;;
 
 let[@cold] raise_invalid_index t ~index =

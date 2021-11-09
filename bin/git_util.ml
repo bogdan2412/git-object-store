@@ -19,7 +19,7 @@ open Core
 open Async
 module Sha1 = Git.Sha1
 
-let read_git_object_file file =
+let read_object_file file =
   let sha1 =
     let part2, part3 = Filename.split (Filename_unix.realpath file) in
     let _part1, part2 = Filename.split part2 in
@@ -51,7 +51,7 @@ let read_git_object_file file =
       Git.Object_reader.read_file git_object_reader ~file sha1)
 ;;
 
-let read_git_pack_file ~print_contents pack_file =
+let read_pack_file ~print_contents pack_file =
   let open Deferred.Or_error.Let_syntax in
   let%map t = Git.Pack_reader.create ~pack_file Validate_sha1 in
   let items_in_pack = Git.Pack_reader.items_in_pack t in
@@ -104,7 +104,11 @@ let read_git_pack_file ~print_contents pack_file =
     done
 ;;
 
-let index_git_pack_file pack_file = Git.Pack_reader.index_pack ~pack_file
+let write_pack_index pack_file = Git.Pack_reader.write_pack_index ~pack_file
+
+let write_pack_reverse_index pack_file =
+  Git.Pack_reader.write_pack_reverse_index ~pack_file
+;;
 
 let read_sha1_from_store ~object_directory sha1 =
   let open Deferred.Or_error.Let_syntax in
@@ -286,15 +290,15 @@ let write_tree_from_directory ~object_directory ~source_directory ~dry_run =
   printf !"%{Sha1.Hex}\n" (Sha1.Raw.to_hex sha1)
 ;;
 
-let read_git_object_file_command =
+let read_object_file_command =
   Command.async_or_error
     ~summary:"print git object file"
     [%map_open.Command
       let file = anon ("FILE" %: Filename_unix.arg_type) in
-      fun () -> read_git_object_file file]
+      fun () -> read_object_file file]
 ;;
 
-let read_git_pack_file_command =
+let read_pack_file_command =
   Command.async_or_error
     ~summary:"print git pack file"
     [%map_open.Command
@@ -305,15 +309,23 @@ let read_git_pack_file_command =
           no_arg
           ~doc:" print pack object contents in addition to the index"
       in
-      fun () -> read_git_pack_file ~print_contents file]
+      fun () -> read_pack_file ~print_contents file]
 ;;
 
-let index_git_pack_file_command =
+let write_pack_index_command =
   Command.async_or_error
     ~summary:"generate index for git pack file"
     [%map_open.Command
       let file = anon ("FILE" %: Filename_unix.arg_type) in
-      fun () -> index_git_pack_file file]
+      fun () -> write_pack_index file]
+;;
+
+let write_pack_reverse_index_command =
+  Command.async_or_error
+    ~summary:"generate reverse index for git pack file"
+    [%map_open.Command
+      let file = anon ("FILE" %: Filename_unix.arg_type) in
+      fun () -> write_pack_reverse_index file]
 ;;
 
 let read_sha1_from_store_command =
@@ -378,9 +390,10 @@ let write_tree_from_directory_command =
 let command =
   Command.group
     ~summary:"git object store"
-    [ "read-object-file", read_git_object_file_command
-    ; "read-pack-file", read_git_pack_file_command
-    ; "index-pack-file", index_git_pack_file_command
+    [ "read-object-file", read_object_file_command
+    ; "read-pack-file", read_pack_file_command
+    ; "write-pack-index", write_pack_index_command
+    ; "write-pack-reverse-index", write_pack_reverse_index_command
     ; "read-sha1-from-store", read_sha1_from_store_command
     ; "write-commit-from-file", write_commit_from_file_command
     ; "write-tree-from-file", write_tree_from_file_command

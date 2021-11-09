@@ -28,6 +28,9 @@ val open_existing
   -> items_in_pack:int
   -> t Or_error.t Deferred.t
 
+(** Returns the number of items in the pack. *)
+val items_in_pack : t -> int
+
 (** Returns the sha1 corresponding to the object with the provided index position. *)
 val sha1 : t -> index:int -> Sha1.Raw.Volatile.t
 
@@ -40,3 +43,9 @@ val find_sha1_index : t -> Sha1.Raw.t -> Find_result.Volatile.t
 
 (** Search for an object with the given SHA1 hash in the pack. *)
 val find_sha1_index' : t -> Sha1.Raw.Volatile.t -> Find_result.Volatile.t
+
+(** Returns the path on disk to the index file. *)
+val index_file : t -> string
+
+(** Returns the corresponding pack's sha1. *)
+val pack_sha1 : t -> Sha1.Raw.Volatile.t

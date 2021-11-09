@@ -276,7 +276,7 @@ let write_index_file ~index_file ~(objects_in_sha1_order : Object.t array) ~pack
     Fd.syscall_in_thread_exn ~name:"git-pack-mmap-file" fd (fun file_descr ->
       Bigstring_unix.map_file ~shared:true file_descr index_file_size)
   in
-  Bigstring.unsafe_set_uint32_le file_mmap ~pos:0 1666151679;
+  Bigstring.unsafe_set_uint32_be file_mmap ~pos:0 0xff744f63;
   Bigstring.unsafe_set_uint32_be file_mmap ~pos:4 2;
   Array.iter objects_in_sha1_order ~f:(fun object_ ->
     let first_byte = (Sha1.Raw.to_string (Set_once.get_exn object_.sha1 [%here])).[0] in
@@ -339,7 +339,7 @@ let write_index_file ~index_file ~(objects_in_sha1_order : Object.t array) ~pack
     ~len:Sha1.Raw.length
 ;;
 
-let index_pack ~pack_file ~pack_file_mmap ~items_in_pack =
+let write_index ~pack_file ~pack_file_mmap ~items_in_pack =
   let index_file = String.chop_suffix_exn ~suffix:".pack" pack_file ^ ".idx" in
   let delta_object_parser = Delta_object_parser.create Do_not_validate_sha1 in
   let sha1_compute = Sha1.Compute.create_uninitialised () in

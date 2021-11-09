@@ -34,7 +34,10 @@ val create
   -> 'Sha1_validation t Or_error.t Deferred.t
 
 (** Read a pack file and generate a corresponding index file for it. *)
-val index_pack : pack_file:string -> unit Or_error.t Deferred.t
+val write_pack_index : pack_file:string -> unit Or_error.t Deferred.t
+
+(** Read a pack file's index and generate a corresponding reverse index file for it. *)
+val write_pack_reverse_index : pack_file:string -> unit Or_error.t Deferred.t
 
 (** Returns number of items in the pack. *)
 val items_in_pack : _ t -> int
