@@ -55,17 +55,14 @@ let read_variable_length_relative_offset =
 ;;
 
 let feed_parser_data =
-  let rec feed_data_loop ~acc parser_ ~process ~finalise buf ~pos =
+  let rec feed_data_loop ~acc parser_ ~process buf ~pos =
     let len = Int.min (Bigstring.length buf - pos) (1 lsl 16) in
     let consumed = process parser_ buf ~pos ~len in
     if consumed < len || len = 0
-    then (
-      finalise parser_;
-      acc + consumed)
-    else feed_data_loop ~acc:(acc + len) parser_ ~process ~finalise buf ~pos:(pos + len)
+    then acc + consumed
+    else feed_data_loop ~acc:(acc + len) parser_ ~process buf ~pos:(pos + len)
   in
-  fun parser_ ~process ~finalise buf ~pos ->
-    feed_data_loop ~acc:0 parser_ ~process ~finalise buf ~pos
+  fun parser_ ~process buf ~pos -> feed_data_loop ~acc:0 parser_ ~process buf ~pos
 ;;
 
 module Base_object_parser : sig
@@ -73,31 +70,14 @@ module Base_object_parser : sig
 
   val create : 'Sha1_validation Sha1_validation.t -> 'Sha1_validation t
 
-  val reset_for_reading_blob
+  val reset_for_reading
     :  'Sha1_validation t
+    -> Object_type.t
     -> payload_length:int
-    -> on_size:(int -> unit)
-    -> on_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
-    -> 'Sha1_validation
-    -> unit
-
-  val reset_for_reading_commit
-    :  'Sha1_validation t
-    -> payload_length:int
+    -> on_blob_size:(int -> unit)
+    -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
     -> on_commit:(Commit.t -> unit)
-    -> 'Sha1_validation
-    -> unit
-
-  val reset_for_reading_tree
-    :  'Sha1_validation t
-    -> payload_length:int
     -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
-    -> 'Sha1_validation
-    -> unit
-
-  val reset_for_reading_tag
-    :  'Sha1_validation t
-    -> payload_length:int
     -> on_tag:(Tag.t -> unit)
     -> 'Sha1_validation
     -> unit
@@ -138,31 +118,27 @@ end = struct
       }
   ;;
 
-  let reset_for_reading_blob t ~payload_length ~on_size ~on_chunk expected_sha1 =
+  let reset_for_reading
+        t
+        object_type
+        ~payload_length
+        ~on_blob_size
+        ~on_blob_chunk
+        ~on_commit
+        ~on_tree_line
+        ~on_tag
+        expected_sha1
+    =
     Zlib.Inflate.init_or_reset t.zlib_inflate;
-    Object_parser.set_on_blob t.object_parser ~on_size ~on_chunk;
-    Object_parser.reset_for_reading_blob t.object_parser ~payload_length;
-    t.expected_sha1 <- expected_sha1
-  ;;
-
-  let reset_for_reading_commit t ~payload_length ~on_commit expected_sha1 =
-    Zlib.Inflate.init_or_reset t.zlib_inflate;
-    Object_parser.set_on_commit t.object_parser on_commit;
-    Object_parser.reset_for_reading_commit t.object_parser ~payload_length;
-    t.expected_sha1 <- expected_sha1
-  ;;
-
-  let reset_for_reading_tree t ~payload_length ~on_tree_line expected_sha1 =
-    Zlib.Inflate.init_or_reset t.zlib_inflate;
-    Object_parser.set_on_tree_line t.object_parser on_tree_line;
-    Object_parser.reset_for_reading_tree t.object_parser ~payload_length;
-    t.expected_sha1 <- expected_sha1
-  ;;
-
-  let reset_for_reading_tag t ~payload_length ~on_tag expected_sha1 =
-    Zlib.Inflate.init_or_reset t.zlib_inflate;
-    Object_parser.set_on_tag t.object_parser on_tag;
-    Object_parser.reset_for_reading_tag t.object_parser ~payload_length;
+    Object_parser.set_callback_and_reset_for_reading_object_type
+      t.object_parser
+      object_type
+      ~payload_length
+      ~on_blob_size
+      ~on_blob_chunk
+      ~on_commit
+      ~on_tree_line
+      ~on_tag;
     t.expected_sha1 <- expected_sha1
   ;;
 
@@ -175,7 +151,16 @@ end = struct
 end
 
 module Delta_object_parser : sig
-  type 'Sha1_validation t
+  type ('Sha1_validation, _, _, _) t
+
+  type 'Sha1_validation packed_result =
+    | T :
+        ( 'Sha1_validation
+        , [< `No_base | `Have_base ]
+        , [< `No_delta | `Have_delta ]
+        , [ `Have_result of [ `Object ] ] )
+          t
+        -> 'Sha1_validation packed_result
 
   (** An instance of [t] contains three buffers: [base], [delta] and [result].
 
@@ -183,41 +168,99 @@ module Delta_object_parser : sig
       [delta] represents the set of delta instructions applied on top of [base].
       [result] will contain the result of applying [delta] to [base].
   *)
-  val create : 'Sha1_validation Sha1_validation.t -> 'Sha1_validation t
+  val create
+    :  'Sha1_validation Sha1_validation.t
+    -> ('Sha1_validation, [ `No_base ], [ `No_delta ], [ `No_result ]) t
+
+  val reset
+    :  ( 'Sha1_validation
+       , [< `No_base | `Have_base ]
+       , [< `No_delta | `Have_delta ]
+       , [< `No_result | `Computing_result of _ | `Have_result of _ ] )
+         t
+    -> ('Sha1_validation, [ `No_base ], [ `No_delta ], [ `No_result ]) t
 
   (** Returns the buffer containing a computed [result]. *)
-  val result_buf : _ t -> Bigstring.t
+  val result_buf : (_, _, _, [ `Have_result of _ ]) t -> Bigstring.t
 
   (** Returns length of computed [result]. *)
-  val result_len : _ t -> int
+  val result_len : (_, _, _, [ `Have_result of _ ]) t -> int
 
   (** Reset [result] buffer and prepare to receive zlib compressed data which will be
       decompressed into it. *)
-  val begin_zlib_inflate_into_result : _ t -> unit
+  val begin_zlib_inflate_into_result
+    :  ('Sha1_validation, 'base, 'delta, _) t
+    -> 'kind Pack_object_type.t
+    -> expected_length:int
+    -> ('Sha1_validation, 'base, 'delta, [ `Computing_result of 'kind ]) t
 
   (** Feed [result] buffer a chunk of zlib compressed data. *)
-  val feed_result_zlib_inflate : _ t -> Bigstring.t -> pos:int -> len:int -> int
+  val feed_result_zlib_inflate
+    :  (_, _, _, [ `Computing_result of _ ]) t
+    -> Bigstring.t
+    -> pos:int
+    -> len:int
+    -> int
 
-  (** Finish decompressing into [result] buffer. *)
-  val finalise_result_zlib_inflate : _ t -> unit
+  (** Finish decompressing into [result] buffer.
+
+      Raises if the resulting buffer's size does not match the [expected_length] value we
+      initialized with. *)
+  val finalise_result_zlib_inflate_exn
+    :  ('Sha1_validation, 'base, 'delta, [ `Computing_result of 'kind ]) t
+    -> ('Sha1_validation, 'base, 'delta, [ `Have_result of 'kind ]) t
+
+  (** Replace the [base] buffer with the provided buffer and length and call the provided
+      method. The original base buffer is placed back once the method returns.
+
+      Note that the contents in the buffer is _not_ copied. *)
+  val with_base_buffer_and_length
+    :  ('Sha1_validation, 'base, 'delta, _) t
+    -> [ `Object ] Pack_object_type.t
+    -> Bigstring.t
+    -> length:int
+    -> (('Sha1_validation, [ `Have_external_base ], 'delta, [ `No_result ]) t
+        -> ( 'Sha1_validation
+           , [ `Have_external_base ]
+           , 'delta
+           , [ `Have_result of [ `Object ] ] )
+             t)
+    -> ('Sha1_validation, 'base, 'delta, [ `Have_result of [ `Object ] ]) t
+
+  (** Swap [result] and [base] buffers assuming the [base] buffer was not externally
+      provided. *)
+  val set_result_as_base
+    :  ( 'Sha1_validation
+       , [< `No_base | `Have_base ]
+       , 'delta
+       , [ `Have_result of [ `Object ] ] )
+         t
+    -> ('Sha1_validation, [ `Have_base ], 'delta, [ `No_result ]) t
 
   (** Swap [result] and [delta] buffers. *)
-  val set_result_as_delta : _ t -> unit
-
-  (** Swap [result] and [base] buffers. *)
-  val set_result_as_base : _ t -> unit
-
-  (** Replace the [base] buffer with the provided buffer and length.
-      Note that the contents in the buffer is _not_ copied. *)
-  val set_base_buffer_and_length : _ t -> Bigstring.t -> length:int -> unit
+  val set_result_as_delta
+    :  ( 'Sha1_validation
+       , 'base
+       , [< `No_delta | `Have_delta ]
+       , [ `Have_result of [ `Delta ] ] )
+         t
+    -> ('Sha1_validation, 'base, [ `Have_delta ], [ `No_result ]) t
 
   (** Compute [result] buffer from [base] and [delta] buffers. *)
-  val compute_result : _ t -> unit
+  val compute_result
+    :  ( 'Sha1_validation
+       , ([< `Have_base | `Have_external_base ] as 'base)
+       , [ `Have_delta ]
+       , [ `No_result ] )
+         t
+    -> ('Sha1_validation, 'base, [ `Have_delta ], [ `Have_result of [ `Object ] ]) t
+
+  (** The type of the git object present in the result buffer. *)
+  val result_object_type : (_, _, _, [ `Have_result of [ `Object ] ]) t -> Object_type.t
 
   (** Parse output in [result] as a Git base object. *)
   val parse_result
-    :  'Sha1_validation t
-    -> Object_type.t
+    :  ('Sha1_validation, _, _, [ `Have_result of [ `Object ] ]) t
     -> on_blob_size:(int -> unit)
     -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
     -> on_commit:(Commit.t -> unit)
@@ -226,17 +269,28 @@ module Delta_object_parser : sig
     -> 'Sha1_validation
     -> unit
 end = struct
-  type 'Sha1_validation t =
+  type ('Sha1_validation, _, _, _) t =
     { mutable base_buf : Bigstring.t
     ; mutable base_len : int
     ; mutable delta_buf : Bigstring.t
     ; mutable delta_len : int
     ; mutable result_buf : Bigstring.t
     ; mutable result_len : int
+    ; mutable result_object_type : Object_type.t
+    ; mutable zlib_result_expected_length : int
     ; result_zlib_inflate : Zlib.Inflate.t
     ; object_parser : 'Sha1_validation Object_parser.t
     }
   [@@deriving fields]
+
+  type 'Sha1_validation packed_result =
+    | T :
+        ( 'Sha1_validation
+        , [< `No_base | `Have_base ]
+        , [< `No_delta | `Have_delta ]
+        , [ `Have_result of [ `Object ] ] )
+          t
+        -> 'Sha1_validation packed_result
 
   let blit_into_result_buf t buf ~pos ~len =
     while t.result_len + len > Bigstring.length t.result_buf do
@@ -337,6 +391,8 @@ end = struct
         ; result_buf =
             Bigstring.create (if Core.am_running_inline_test then 1 else 1 lsl 15)
         ; result_len = 0
+        ; result_object_type = Commit
+        ; zlib_result_expected_length = 0
         ; result_zlib_inflate = Lazy.force result_zlib_inflate
         ; object_parser
         }
@@ -348,41 +404,116 @@ end = struct
     Lazy.force t
   ;;
 
-  let set_result_as_base t =
+  let reset (t : ('Sha1_validation, _, _, _) t) =
+    (t :> ('Sha1_validation, [ `No_base ], [ `No_delta ], [ `No_result ]) t)
+  ;;
+
+  let set_result_as_base
+        (t :
+           ( 'Sha1_validation
+           , [< `No_base | `Have_base ]
+           , 'delta
+           , [ `Have_result of [ `Object ] ] )
+             t)
+    =
     let temp = t.base_buf in
     t.base_buf <- t.result_buf;
     t.result_buf <- temp;
     let temp = t.base_len in
     t.base_len <- t.result_len;
-    t.result_len <- temp
+    t.result_len <- temp;
+    (t :> ('Sha1_validation, [ `Have_base ], 'delta, [ `No_result ]) t)
   ;;
 
-  let set_result_as_delta t =
+  let set_result_as_delta
+        (t :
+           ( 'Sha1_validation
+           , 'base
+           , [< `No_delta | `Have_delta ]
+           , [ `Have_result of [ `Delta ] ] )
+             t)
+    =
     let temp = t.delta_buf in
     t.delta_buf <- t.result_buf;
     t.result_buf <- temp;
     let temp = t.delta_len in
     t.delta_len <- t.result_len;
-    t.result_len <- temp
+    t.result_len <- temp;
+    (t :> ('Sha1_validation, 'base, [ `Have_delta ], [ `No_result ]) t)
   ;;
 
-  let begin_zlib_inflate_into_result t =
+  let begin_zlib_inflate_into_result
+        (type kind)
+        (t : ('Sha1_validation, 'base, 'delta, _) t)
+        (object_type : kind Pack_object_type.t)
+        ~expected_length
+    =
     t.result_len <- 0;
-    Zlib.Inflate.init_or_reset t.result_zlib_inflate
+    Zlib.Inflate.init_or_reset t.result_zlib_inflate;
+    (match object_type with
+     | (Commit | Tree | Blob | Tag) as object_type ->
+       t.result_object_type <- Pack_object_type.to_object_type object_type
+     | Ofs_delta | Ref_delta -> ());
+    t.zlib_result_expected_length <- expected_length;
+    (t :> ('Sha1_validation, 'base, 'delta, [ `Computing_result of kind ]) t)
   ;;
 
-  let feed_result_zlib_inflate t buf ~pos ~len =
+  let feed_result_zlib_inflate (t : (_, _, _, [ `Computing_result of _ ]) t) buf ~pos ~len
+    =
     Zlib.Inflate.process t.result_zlib_inflate buf ~pos ~len
   ;;
 
-  let finalise_result_zlib_inflate t = Zlib.Inflate.finalise t.result_zlib_inflate
-
-  let set_base_buffer_and_length t buf ~length =
-    t.base_buf <- buf;
-    t.base_len <- length
+  let finalise_result_zlib_inflate_exn
+        (t : ('Sha1_validation, 'base, 'delta, [ `Computing_result of 'kind ]) t)
+    =
+    Zlib.Inflate.finalise t.result_zlib_inflate;
+    if t.result_len <> t.zlib_result_expected_length
+    then
+      raise_s
+        [%message
+          "Unexpected decompressed object length"
+            ~expected_length:(t.zlib_result_expected_length : int)
+            ~actual_length:(t.result_len : int)];
+    (t :> ('Sha1_validation, 'base, 'delta, [ `Have_result of 'kind ]) t)
   ;;
 
-  let compute_result t =
+  let[@inline] with_base_buffer_and_length
+                 (t : ('Sha1_validation, 'base, 'delta, _) t)
+                 object_type
+                 buf
+                 ~length
+                 f
+    =
+    let old_base_buf = t.base_buf in
+    let old_base_len = t.base_len in
+    t.base_buf <- buf;
+    t.base_len <- length;
+    t.result_object_type <- Pack_object_type.to_object_type object_type;
+    (protect [@inlined hint])
+      ~f:(fun [@inline] () ->
+        let t =
+          (t :> ('Sha1_validation, [ `Have_external_base ], 'delta, [ `No_result ]) t)
+        in
+        let t
+          : ( 'Sha1_validation, [ `Have_external_base ], 'delta
+            , [ `Have_result of [ `Object ] ] ) t
+          =
+          f t
+        in
+        (t :> ('Sha1_validation, 'base, 'delta, [ `Have_result of [ `Object ] ]) t))
+      ~finally:(fun () ->
+        t.base_buf <- old_base_buf;
+        t.base_len <- old_base_len)
+  ;;
+
+  let compute_result
+        (t :
+           ( 'Sha1_validation
+           , ([< `Have_base | `Have_external_base ] as 'base)
+           , [ `Have_delta ]
+           , [ `No_result ] )
+             t)
+    =
     t.result_len <- 0;
     let pos = 0 in
     let expected_base_length = read_variable_length_integer t.delta_buf ~pos in
@@ -403,12 +534,16 @@ end = struct
         [%message
           "Expected delta object result of different length"
             ~actual_result_length:(t.result_len : int)
-            (expected_result_length : int)]
+            (expected_result_length : int)];
+    (t :> ('Sha1_validation, 'base, [ `Have_delta ], [ `Have_result of [ `Object ] ]) t)
+  ;;
+
+  let result_object_type (t : (_, _, _, [ `Have_result of [ `Object ] ]) t) =
+    t.result_object_type
   ;;
 
   let parse_result
-        t
-        object_type
+        (t : (_, _, _, [ `Have_result of [ `Object ] ]) t)
         ~on_blob_size
         ~on_blob_chunk
         ~on_commit
@@ -416,47 +551,29 @@ end = struct
         ~on_tag
         sha1_validation
     =
-    (match (object_type : Object_type.t) with
-     | Commit ->
-       Object_parser.set_on_commit t.object_parser on_commit;
-       Object_parser.reset_for_reading_commit t.object_parser ~payload_length:t.result_len
-     | Tree ->
-       Object_parser.set_on_tree_line t.object_parser on_tree_line;
-       Object_parser.reset_for_reading_tree t.object_parser ~payload_length:t.result_len
-     | Blob ->
-       Object_parser.set_on_blob
-         t.object_parser
-         ~on_size:on_blob_size
-         ~on_chunk:on_blob_chunk;
-       Object_parser.reset_for_reading_blob t.object_parser ~payload_length:t.result_len
-     | Tag ->
-       Object_parser.set_on_tag t.object_parser on_tag;
-       Object_parser.reset_for_reading_tag t.object_parser ~payload_length:t.result_len);
+    Object_parser.set_callback_and_reset_for_reading_object_type
+      t.object_parser
+      t.result_object_type
+      ~payload_length:t.result_len
+      ~on_blob_size
+      ~on_blob_chunk
+      ~on_commit
+      ~on_tree_line
+      ~on_tag;
     Object_parser.append_data t.object_parser t.result_buf ~pos:0 ~len:t.result_len;
     Object_parser.finalise t.object_parser sha1_validation
   ;;
 end
 
-module Pack_object_type = struct
-  type t =
-    | Commit
-    | Tree
-    | Blob
-    | Tag
-    | Ofs_delta
-    | Ref_delta
-  [@@deriving sexp]
-end
-
-let object_type' buf ~pos : Pack_object_type.t =
+let object_type' buf ~pos : Pack_object_type.packed =
   let type_int = (Bigstring.get_uint8 buf ~pos lsr 4) land 7 in
   match type_int with
-  | 1 -> Commit
-  | 2 -> Tree
-  | 3 -> Blob
-  | 4 -> Tag
-  | 6 -> Ofs_delta
-  | 7 -> Ref_delta
+  | 1 -> T Commit
+  | 2 -> T Tree
+  | 3 -> T Blob
+  | 4 -> T Tag
+  | 6 -> T Ofs_delta
+  | 7 -> T Ref_delta
   | _ -> raise_s [%message "Invalid pack object type" (type_int : int)]
 ;;
 
@@ -656,7 +773,7 @@ module Index = struct
         if items_left = 0
         then pos
         else (
-          let pack_object_type = object_type' buf ~pos in
+          let (T pack_object_type) = object_type' buf ~pos in
           let object_length = object_length' buf ~pos in
           let data_start_pos = skip_variable_length_integer buf ~pos in
           let data_start_pos, (object_type : Object_type.t), delta_parent =
@@ -684,10 +801,10 @@ module Index = struct
             feed_parser_data
               zlib_inflate
               ~process:Zlib.Inflate.process
-              ~finalise:Zlib.Inflate.finalise
               buf
               ~pos:data_start_pos
           in
+          Zlib.Inflate.finalise zlib_inflate;
           let object_ =
             { Object.pack_pos = pos
             ; pack_data_start_pos = data_start_pos
@@ -735,37 +852,74 @@ module Index = struct
         objects
     ;;
 
+    let compute_resulting_delta_object
+          (type kind)
+          (delta_object_parser :
+             (unit, [ `No_base ], [ `No_delta ], [ `No_result ]) Delta_object_parser.t)
+          (pack_object_type : kind Pack_object_type.t)
+          ~expected_length
+          buf
+          ~pos
+      : ( unit, [ `No_base ], [ `No_delta ], [ `Have_result of kind ] )
+          Delta_object_parser.t
+      =
+      let delta_object_parser =
+        Delta_object_parser.begin_zlib_inflate_into_result
+          delta_object_parser
+          pack_object_type
+          ~expected_length
+      in
+      let (_ : int) =
+        feed_parser_data
+          delta_object_parser
+          ~process:Delta_object_parser.feed_result_zlib_inflate
+          buf
+          ~pos
+      in
+      Delta_object_parser.finalise_result_zlib_inflate_exn delta_object_parser
+    ;;
+
     let rec dfs =
       let object_type_buf = Bigstring.create 32 in
       fun delta_object_parser sha1_compute_uninit (object_ : Object.t) buf ->
         let pos = object_.pack_data_start_pos in
-        Delta_object_parser.begin_zlib_inflate_into_result delta_object_parser;
-        let (_ : int) =
-          feed_parser_data
-            delta_object_parser
-            ~process:Delta_object_parser.feed_result_zlib_inflate
-            ~finalise:Delta_object_parser.finalise_result_zlib_inflate
-            buf
-            ~pos
+        let object_type = Pack_object_type.of_object_type object_.object_type in
+        let (T delta_object_parser) =
+          match object_.delta_parent with
+          | None ->
+            let delta_object_parser =
+              compute_resulting_delta_object
+                delta_object_parser
+                object_type
+                ~expected_length:object_.object_length
+                buf
+                ~pos
+            in
+            Delta_object_parser.T delta_object_parser
+          | Some delta_parent ->
+            let delta_object_parser =
+              compute_resulting_delta_object
+                delta_object_parser
+                Ref_delta
+                ~expected_length:object_.object_length
+                buf
+                ~pos
+            in
+            let parent_contents = Option.value_exn delta_parent.contents in
+            let delta_object_parser =
+              Delta_object_parser.set_result_as_delta delta_object_parser
+            in
+            let delta_object_parser =
+              Delta_object_parser.with_base_buffer_and_length
+                delta_object_parser
+                object_type
+                parent_contents
+                ~length:(Bigstring.length parent_contents)
+                (* The method below validates that the length of the result is correct. *)
+                Delta_object_parser.compute_result
+            in
+            T delta_object_parser
         in
-        if Delta_object_parser.result_len delta_object_parser <> object_.object_length
-        then
-          raise_s
-            [%message
-              "Unexpected decompressed object length"
-                ~expected_length:(object_.object_length : int)
-                ~actual_length:(Delta_object_parser.result_len delta_object_parser : int)];
-        (match object_.delta_parent with
-         | None -> ()
-         | Some delta_parent ->
-           let parent_contents = Option.value_exn delta_parent.contents in
-           Delta_object_parser.set_base_buffer_and_length
-             delta_object_parser
-             parent_contents
-             ~length:(Bigstring.length parent_contents);
-           Delta_object_parser.set_result_as_delta delta_object_parser;
-           (* The method below validates that the length of the result is correct. *)
-           Delta_object_parser.compute_result delta_object_parser);
         let sha1_compute = Sha1.Compute.init_or_reset sha1_compute_uninit in
         let header_len =
           Object_header_writer.write_from_left
@@ -794,6 +948,7 @@ module Index = struct
                   (Delta_object_parser.result_buf delta_object_parser)
                   ~pos:0
                   ~len:(Delta_object_parser.result_len delta_object_parser));
+          let delta_object_parser = Delta_object_parser.reset delta_object_parser in
           List.iter children ~f:(fun child ->
             dfs delta_object_parser sha1_compute_uninit child buf);
           object_.contents <- None
@@ -928,7 +1083,12 @@ type 'Sha1_validation t =
   ; pack_file_mmap : Bigstring.t
   ; items_in_pack : int
   ; base_object_parser : 'Sha1_validation Base_object_parser.t
-  ; delta_object_parser : 'Sha1_validation Delta_object_parser.t
+  ; delta_object_parser :
+      ( 'Sha1_validation
+      , [ `No_base ]
+      , [ `No_delta ]
+      , [ `No_result ] )
+        Delta_object_parser.t
   ; sha1_validation : 'Sha1_validation Sha1_validation.t
   ; index : Index.t
   }
@@ -1160,29 +1320,27 @@ let find_sha1_index' t sha1 =
 ;;
 
 module Read_raw_delta_object_function = struct
-  let feed_parser_data delta_object_parser ~expected_length buf pos =
-    Delta_object_parser.begin_zlib_inflate_into_result delta_object_parser;
+  let feed_parser_data delta_object_parser object_type ~expected_length buf pos =
+    let delta_object_parser =
+      Delta_object_parser.begin_zlib_inflate_into_result
+        delta_object_parser
+        object_type
+        ~expected_length
+    in
     let (_ : int) =
       feed_parser_data
         delta_object_parser
         ~process:Delta_object_parser.feed_result_zlib_inflate
-        ~finalise:Delta_object_parser.finalise_result_zlib_inflate
         buf
         ~pos
     in
-    let actual_length = Delta_object_parser.result_len delta_object_parser in
-    if expected_length <> actual_length
-    then
-      raise_s
-        [%message
-          "Unexpected object length" (actual_length : int) (expected_length : int)]
+    Delta_object_parser.finalise_result_zlib_inflate_exn delta_object_parser
   ;;
 
   let sha1 = Sha1.Raw.Volatile.create ()
 
   let delta_object_base_pos t ~pos ~data_start_pos object_type =
-    match (object_type : Pack_object_type.t) with
-    | Commit | Tree | Blob | Tag -> assert false
+    match (object_type : [ `Delta ] Pack_object_type.t) with
     | Ofs_delta ->
       let rel_offset =
         read_variable_length_relative_offset t.pack_file_mmap ~pos:data_start_pos
@@ -1202,36 +1360,39 @@ module Read_raw_delta_object_function = struct
   let rec impl t ~pos =
     let data_start_pos = skip_variable_length_integer t.pack_file_mmap ~pos in
     match object_type' t.pack_file_mmap ~pos with
-    | (Commit | Tree | Blob | Tag) as object_type ->
-      feed_parser_data
-        t.delta_object_parser
-        ~expected_length:(object_length' t.pack_file_mmap ~pos)
-        t.pack_file_mmap
-        data_start_pos;
-      (match object_type with
-       | Commit -> Object_type.Commit
-       | Tree -> Tree
-       | Blob -> Blob
-       | Tag -> Tag
-       | Ofs_delta | Ref_delta -> assert false)
-    | (Ofs_delta | Ref_delta) as object_type ->
-      let base_pos = delta_object_base_pos t ~pos ~data_start_pos object_type in
+    | T ((Commit | Tree | Blob | Tag) as object_type) ->
+      let delta_object_parser =
+        feed_parser_data
+          t.delta_object_parser
+          object_type
+          ~expected_length:(object_length' t.pack_file_mmap ~pos)
+          t.pack_file_mmap
+          data_start_pos
+      in
+      Delta_object_parser.T delta_object_parser
+    | T ((Ofs_delta | Ref_delta) as delta_object_type) ->
+      let base_pos = delta_object_base_pos t ~pos ~data_start_pos delta_object_type in
       let data_start_pos =
-        match object_type with
-        | Commit | Tree | Blob | Tag -> assert false
+        match delta_object_type with
         | Ofs_delta -> skip_variable_length_integer t.pack_file_mmap ~pos:data_start_pos
         | Ref_delta -> data_start_pos + Sha1.Raw.length
       in
-      let object_type = impl t ~pos:base_pos in
-      Delta_object_parser.set_result_as_base t.delta_object_parser;
-      feed_parser_data
-        t.delta_object_parser
-        ~expected_length:(object_length' t.pack_file_mmap ~pos)
-        t.pack_file_mmap
-        data_start_pos;
-      Delta_object_parser.set_result_as_delta t.delta_object_parser;
-      Delta_object_parser.compute_result t.delta_object_parser;
-      object_type
+      let (T delta_object_parser) = impl t ~pos:base_pos in
+      let delta_object_parser =
+        Delta_object_parser.set_result_as_base delta_object_parser
+      in
+      let delta_object_parser =
+        feed_parser_data
+          delta_object_parser
+          delta_object_type
+          ~expected_length:(object_length' t.pack_file_mmap ~pos)
+          t.pack_file_mmap
+          data_start_pos
+      in
+      let delta_object_parser =
+        Delta_object_parser.set_result_as_delta delta_object_parser
+      in
+      T (Delta_object_parser.compute_result delta_object_parser)
   ;;
 end
 
@@ -1243,10 +1404,11 @@ module Read_raw_object_function = struct
 
   let impl (type a) (t : a t) ~index ~on_header ~on_payload =
     let pos = pack_file_object_offset t ~index in
-    let object_type = read_raw_delta_object t ~pos in
-    let len = Delta_object_parser.result_len t.delta_object_parser in
+    let (T delta_object_parser) = read_raw_delta_object t ~pos in
+    let object_type = Delta_object_parser.result_object_type delta_object_parser in
+    let len = Delta_object_parser.result_len delta_object_parser in
     on_header object_type ~size:len;
-    on_payload (Delta_object_parser.result_buf t.delta_object_parser) ~pos:0 ~len;
+    on_payload (Delta_object_parser.result_buf delta_object_parser) ~pos:0 ~len;
     match t.sha1_validation with
     | Do_not_validate_sha1 -> ()
     | Validate_sha1 ->
@@ -1257,7 +1419,7 @@ module Read_raw_object_function = struct
       Sha1.Compute.process sha1_context buf ~pos:0 ~len:header_len;
       Sha1.Compute.process
         sha1_context
-        (Delta_object_parser.result_buf t.delta_object_parser)
+        (Delta_object_parser.result_buf delta_object_parser)
         ~pos:0
         ~len;
       let sha1_context = Sha1.Compute.finalise sha1_context in
@@ -1282,11 +1444,10 @@ module Read_object_function = struct
       feed_parser_data
         t.base_object_parser
         ~process:Base_object_parser.process
-        ~finalise:Base_object_parser.finalise
         t.pack_file_mmap
         ~pos
     in
-    ()
+    Base_object_parser.finalise t.base_object_parser
   ;;
 
   let impl
@@ -1303,48 +1464,24 @@ module Read_object_function = struct
     let payload_length = object_length' t.pack_file_mmap ~pos in
     let data_start_pos = skip_variable_length_integer t.pack_file_mmap ~pos in
     match object_type' t.pack_file_mmap ~pos with
-    | Commit ->
-      Base_object_parser.reset_for_reading_commit
+    | T ((Commit | Tree | Blob | Tag) as object_type) ->
+      Base_object_parser.reset_for_reading
         t.base_object_parser
+        (Pack_object_type.to_object_type object_type)
         ~payload_length
+        ~on_blob_size
+        ~on_blob_chunk
         ~on_commit
-        (match t.sha1_validation with
-         | Do_not_validate_sha1 -> ()
-         | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index));
-      feed_parser_data t data_start_pos
-    | Tree ->
-      Base_object_parser.reset_for_reading_tree
-        t.base_object_parser
-        ~payload_length
         ~on_tree_line
-        (match t.sha1_validation with
-         | Do_not_validate_sha1 -> ()
-         | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index));
-      feed_parser_data t data_start_pos
-    | Blob ->
-      Base_object_parser.reset_for_reading_blob
-        t.base_object_parser
-        ~payload_length
-        ~on_size:on_blob_size
-        ~on_chunk:on_blob_chunk
-        (match t.sha1_validation with
-         | Do_not_validate_sha1 -> ()
-         | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index));
-      feed_parser_data t data_start_pos
-    | Tag ->
-      Base_object_parser.reset_for_reading_tag
-        t.base_object_parser
-        ~payload_length
         ~on_tag
         (match t.sha1_validation with
          | Do_not_validate_sha1 -> ()
          | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index));
       feed_parser_data t data_start_pos
-    | Ofs_delta | Ref_delta ->
-      let object_type = read_raw_delta_object t ~pos in
+    | T (Ofs_delta | Ref_delta) ->
+      let (T delta_object_parser) = read_raw_delta_object t ~pos in
       Delta_object_parser.parse_result
-        t.delta_object_parser
-        object_type
+        delta_object_parser
         ~on_blob_size
         ~on_blob_chunk
         ~on_commit
@@ -1377,7 +1514,7 @@ module Size = struct
 
   let impl t ~index =
     let pos = pack_file_object_offset t ~index in
-    let pack_object_type = object_type' t.pack_file_mmap ~pos in
+    let (T pack_object_type) = object_type' t.pack_file_mmap ~pos in
     let data_start_pos = skip_variable_length_integer t.pack_file_mmap ~pos in
     let data_start_pos =
       match pack_object_type with
@@ -1385,22 +1522,29 @@ module Size = struct
       | Ofs_delta -> skip_variable_length_integer t.pack_file_mmap ~pos:data_start_pos
       | Ref_delta -> data_start_pos + Sha1.Raw.length
     in
-    Delta_object_parser.begin_zlib_inflate_into_result t.delta_object_parser;
+    let delta_size = object_length' t.pack_file_mmap ~pos in
+    let delta_object_parser =
+      Delta_object_parser.begin_zlib_inflate_into_result
+        t.delta_object_parser
+        pack_object_type
+        ~expected_length:delta_size
+    in
     let data_length =
       feed_parser_data
-        t.delta_object_parser
+        delta_object_parser
         ~process:Delta_object_parser.feed_result_zlib_inflate
-        ~finalise:Delta_object_parser.finalise_result_zlib_inflate
         t.pack_file_mmap
         ~pos:data_start_pos
     in
+    let delta_object_parser =
+      Delta_object_parser.finalise_result_zlib_inflate_exn delta_object_parser
+    in
     let pack_size = data_start_pos + data_length - pos in
-    let delta_size = object_length' t.pack_file_mmap ~pos in
     let size =
       match pack_object_type with
       | Commit | Tree | Blob | Tag -> delta_size
       | Ofs_delta | Ref_delta ->
-        let result_buf = Delta_object_parser.result_buf t.delta_object_parser in
+        let result_buf = Delta_object_parser.result_buf delta_object_parser in
         (* The uncompressed delta starts with the length of the expected base object
            and the length of the expected undeltified result encoded as variable length
            integers before the list of delta operations.
@@ -1422,12 +1566,12 @@ module For_testing = struct
     printf "idx | %40s | pack file offset | object length | object type\n" "sha1";
     for index = 0 to t.items_in_pack - 1 do
       printf
-        !"%3d | %{Sha1.Hex} | %16d | %13d | %{sexp: Pack_object_type.t}\n"
+        !"%3d | %{Sha1.Hex} | %16d | %13d | %{sexp: Pack_object_type.Flat.t}\n"
         (Find_result.Volatile.index_exn (find_sha1_index' t (sha1 t ~index)))
         (Sha1.Raw.Volatile.to_hex (sha1 t ~index))
         (pack_file_object_offset t ~index)
         (object_length t ~index)
-        (object_type t ~index)
+        (object_type t ~index |> Pack_object_type.packed_to_flat)
     done;
     for index = 0 to t.items_in_pack - 1 do
       printf !"\n%{Sha1.Hex}\n" (Sha1.Raw.Volatile.to_hex (sha1 t ~index));
