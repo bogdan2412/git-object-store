@@ -19,543 +19,6 @@ open! Core
 open! Async
 open! Import
 
-let read_variable_length_relative_offset =
-  let rec read_loop ~acc buf ~pos =
-    let byte = Bigstring.get_uint8 buf ~pos in
-    let acc = ((acc + 1) lsl 7) lor (byte land 127) in
-    if byte land 128 = 0 then acc else read_loop ~acc buf ~pos:(pos + 1)
-  in
-  fun buf ~pos ->
-    let first_byte = Bigstring.get_uint8 buf ~pos in
-    let acc = first_byte land 127 in
-    if first_byte land 128 = 0 then acc else read_loop ~acc buf ~pos:(pos + 1)
-;;
-
-let feed_parser_data =
-  let rec feed_data_loop ~acc parser_ ~process buf ~pos =
-    let len = Int.min (Bigstring.length buf - pos) (1 lsl 16) in
-    let consumed = process parser_ buf ~pos ~len in
-    if consumed < len || len = 0
-    then acc + consumed
-    else feed_data_loop ~acc:(acc + len) parser_ ~process buf ~pos:(pos + len)
-  in
-  fun parser_ ~process buf ~pos -> feed_data_loop ~acc:0 parser_ ~process buf ~pos
-;;
-
-let object_type' buf ~pos : Pack_object_type.packed =
-  let type_int = (Bigstring.get_uint8 buf ~pos lsr 4) land 7 in
-  match type_int with
-  | 1 -> T Commit
-  | 2 -> T Tree
-  | 3 -> T Blob
-  | 4 -> T Tag
-  | 6 -> T Ofs_delta
-  | 7 -> T Ref_delta
-  | _ -> raise_s [%message "Invalid pack object type" (type_int : int)]
-;;
-
-let object_length' buf ~pos =
-  let first_byte = Bigstring.get_uint8 buf ~pos in
-  if first_byte land 128 = 0
-  then first_byte land 15
-  else
-    first_byte
-    land 15
-    lor (Low_level_reader.read_variable_length_integer buf ~pos:(pos + 1) lsl 4)
-;;
-
-let with_resource ~create ~close_on_error ~f =
-  let open Deferred.Or_error.Let_syntax in
-  let%bind resource = create () in
-  let open Deferred.Let_syntax in
-  let%bind result = f resource in
-  match result with
-  | Ok _ -> return result
-  | Error _ ->
-    (match%map close_on_error resource with
-     | Ok () -> result
-     | Error error ->
-       Log.Global.sexp ~level:`Error [%message "Error closing resource" (error : Error.t)];
-       result)
-;;
-
-let with_file file_path ~f =
-  let open Deferred.Or_error.Let_syntax in
-  with_resource
-    ~create:(fun () ->
-      Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
-        Unix.openfile ~mode:[ `Rdonly ] file_path))
-    ~close_on_error:(fun fd ->
-      Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () -> Unix.close fd))
-    ~f:(fun fd ->
-      let%bind file_size =
-        Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
-          let open Deferred.Let_syntax in
-          let%map stat = Unix.fstat fd in
-          Int64.to_int_exn stat.size)
-      in
-      let%bind file_mmap =
-        Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
-          Fd.syscall_in_thread_exn ~name:"git-pack-mmap-file" fd (fun file_descr ->
-            Bigstring_unix.map_file ~shared:false file_descr file_size))
-      in
-      f fd file_size file_mmap)
-;;
-
-module Index = struct
-  module Section_pos : sig
-    type t
-
-    val create : items_in_pack:int -> t
-    val fanout : t -> char -> int
-    val sha1 : t -> int -> int
-    val crc32 : t -> int -> int
-    val offset : t -> int -> int
-    val uint64_offset : t -> int -> int
-  end = struct
-    type t =
-      { fanout : int
-      ; sha1s : int
-      ; crc32s : int
-      ; offsets : int
-      ; uint64_offsets : int
-      }
-
-    let create ~items_in_pack =
-      let sha1s = 1032 in
-      let crc32s = sha1s + (Sha1.Raw.length * items_in_pack) in
-      let offsets = crc32s + (4 * items_in_pack) in
-      let uint64_offsets = offsets + (4 * items_in_pack) in
-      { fanout = 8; sha1s; crc32s; offsets; uint64_offsets }
-    ;;
-
-    let fanout t byte = t.fanout + (4 * Char.to_int byte)
-    let sha1 t index = t.sha1s + (Sha1.Raw.length * index)
-    let crc32 t index = t.crc32s + (4 * index)
-    let offset t index = t.offsets + (4 * index)
-    let uint64_offset t index = t.uint64_offsets + (8 * index)
-  end
-
-  type t =
-    { index_file : string
-    ; fd : Fd.t
-    ; file_size : int
-    ; file_mmap : Bigstring.t
-    ; section_pos : Section_pos.t
-    }
-
-  let open_existing ~pack_file ~pack_file_mmap ~pack_file_size ~items_in_pack =
-    let index_file = String.chop_suffix_exn pack_file ~suffix:".pack" ^ ".idx" in
-    with_file index_file ~f:(fun fd file_size file_mmap ->
-      let result =
-        let open Or_error.Let_syntax in
-        let%bind () =
-          (* At least 4 for signature, 4 for version, 256 * 4 for fan-out table,
-             one raw SHA1, one CRC32 and one offset for each item in the pack and
-             two raw SHA1s *)
-          if file_size
-             < 1032 + (items_in_pack * (Sha1.Raw.length + 8)) + (2 * Sha1.Raw.length)
-          then Or_error.error_s [%sexp "Index file impossibly small"]
-          else Ok ()
-        in
-        let%bind () =
-          if Bigstring.get_uint32_le file_mmap ~pos:0 <> 1666151679
-          then Or_error.error_s [%sexp "Expected idx signature"]
-          else Ok ()
-        in
-        let%bind () =
-          if Bigstring.get_uint32_be file_mmap ~pos:4 <> 2
-          then Or_error.error_s [%sexp "Expected index version number 2"]
-          else Ok ()
-        in
-        let%bind () =
-          if Bigstring.memcmp
-               file_mmap
-               ~pos1:(file_size - (Sha1.Raw.length * 2))
-               pack_file_mmap
-               ~pos2:(pack_file_size - Sha1.Raw.length)
-               ~len:Sha1.Raw.length
-             <> 0
-          then
-            Or_error.error_s
-              [%sexp "SHA1 checksums do not match between index and pack files"]
-          else Ok ()
-        in
-        return
-          { index_file
-          ; fd
-          ; file_size
-          ; file_mmap
-          ; section_pos = Section_pos.create ~items_in_pack
-          }
-      in
-      Deferred.return result)
-  ;;
-
-  module Builder = struct
-    module Object = struct
-      type t =
-        { pack_pos : int
-        ; pack_data_start_pos : int
-        ; pack_data_length : int
-        ; object_type : Object_type.t
-        ; object_length : int
-        ; crc32 : int
-        ; sha1 : Sha1.Raw.t Set_once.t
-        ; delta_parent : t option
-        ; mutable delta_children : t list
-        ; mutable contents : Bigstring.t option
-        }
-
-      [@@@ocaml.warning "-32"]
-
-      let sexp_of_t
-            { pack_pos
-            ; pack_data_start_pos
-            ; pack_data_length
-            ; object_type
-            ; object_length
-            ; crc32
-            ; sha1
-            ; delta_parent
-            ; delta_children
-            ; contents
-            }
-        =
-        let sha1 =
-          match Set_once.get sha1 with
-          | None -> Sexp.Atom "unset"
-          | Some sha1 -> [%sexp_of: Sha1.Hex.t] (Sha1.Raw.to_hex sha1)
-        in
-        [%sexp
-          { pack_pos : int
-          ; pack_data_start_pos : int
-          ; pack_data_length : int
-          ; object_type : Object_type.t
-          ; object_length : int
-          ; crc32 : int
-          ; sha1 : Sexp.t
-          ; delta_parent =
-              (Option.map delta_parent ~f:(fun delta_parent -> delta_parent.pack_pos) : int
-                                                                                          option)
-          ; delta_children =
-              (List.map delta_children ~f:(fun delta_child -> delta_child.pack_pos) : int
-                                                                                        list)
-          ; contents : (Bigstring.t option[@sexp.option])
-          }]
-      ;;
-
-      [@@@ocaml.warning "+32"]
-    end
-
-    let index_objects =
-      let rec index_objects_loop ~objects ~zlib_inflate ~items_left buf ~pos =
-        if items_left = 0
-        then pos
-        else (
-          let (T pack_object_type) = object_type' buf ~pos in
-          let object_length = object_length' buf ~pos in
-          let data_start_pos = Low_level_reader.skip_variable_length_integer buf ~pos in
-          let data_start_pos, (object_type : Object_type.t), delta_parent =
-            match pack_object_type with
-            | Commit -> data_start_pos, Commit, None
-            | Tree -> data_start_pos, Tree, None
-            | Blob -> data_start_pos, Blob, None
-            | Tag -> data_start_pos, Tag, None
-            | Ofs_delta ->
-              let rel_offset =
-                read_variable_length_relative_offset buf ~pos:data_start_pos
-              in
-              let delta_parent_pos = pos - rel_offset in
-              let (delta_parent_object : Object.t) =
-                Hashtbl.find_exn objects delta_parent_pos
-              in
-              let object_type = delta_parent_object.object_type in
-              ( Low_level_reader.skip_variable_length_integer buf ~pos:data_start_pos
-              , object_type
-              , Some delta_parent_object )
-            | Ref_delta -> failwith "Cannot re-index packs with Ref_delta objects"
-          in
-          Zlib.Inflate.init_or_reset zlib_inflate;
-          let data_length =
-            feed_parser_data
-              zlib_inflate
-              ~process:Zlib.Inflate.process
-              buf
-              ~pos:data_start_pos
-          in
-          Zlib.Inflate.finalise zlib_inflate;
-          let object_ =
-            { Object.pack_pos = pos
-            ; pack_data_start_pos = data_start_pos
-            ; pack_data_length = data_length
-            ; object_type
-            ; object_length
-            ; crc32 =
-                Crc32.finalise
-                  (Crc32.process
-                     Crc32.init
-                     buf
-                     ~pos
-                     ~len:(data_start_pos - pos + data_length))
-            ; sha1 = Set_once.create ()
-            ; delta_parent
-            ; delta_children = []
-            ; contents = None
-            }
-          in
-          Hashtbl.add_exn objects ~key:pos ~data:object_;
-          Option.iter delta_parent ~f:(fun delta_parent ->
-            delta_parent.delta_children <- object_ :: delta_parent.delta_children);
-          index_objects_loop
-            ~objects
-            ~zlib_inflate
-            ~items_left:(items_left - 1)
-            buf
-            ~pos:(data_start_pos + data_length))
-      in
-      fun ~pack_file_mmap ~items_in_pack ->
-        let objects = Int.Table.create () in
-        let zlib_inflate =
-          Zlib.Inflate.create_uninitialised
-            ~on_data_chunk:(fun (_ : Bigstring.t) ~pos:(_ : int) ~len:(_ : int) -> ())
-        in
-        let pos =
-          index_objects_loop
-            ~objects
-            ~zlib_inflate
-            ~items_left:items_in_pack
-            pack_file_mmap
-            ~pos:12
-        in
-        assert (pos = Bigstring.length pack_file_mmap - Sha1.Raw.length);
-        objects
-    ;;
-
-    let compute_resulting_delta_object
-          (type kind)
-          (delta_object_parser :
-             (unit, [ `No_base ], [ `No_delta ], [ `No_result ]) Delta_object_parser.t)
-          (pack_object_type : kind Pack_object_type.t)
-          ~expected_length
-          buf
-          ~pos
-      : ( unit, [ `No_base ], [ `No_delta ], [ `Have_result of kind ] )
-          Delta_object_parser.t
-      =
-      let delta_object_parser =
-        Delta_object_parser.begin_zlib_inflate_into_result
-          delta_object_parser
-          pack_object_type
-          ~expected_length
-      in
-      let (_ : int) =
-        feed_parser_data
-          delta_object_parser
-          ~process:Delta_object_parser.feed_result_zlib_inflate
-          buf
-          ~pos
-      in
-      Delta_object_parser.finalise_result_zlib_inflate_exn delta_object_parser
-    ;;
-
-    let rec dfs =
-      let object_type_buf = Bigstring.create 32 in
-      fun delta_object_parser sha1_compute_uninit (object_ : Object.t) buf ->
-        let pos = object_.pack_data_start_pos in
-        let object_type = Pack_object_type.of_object_type object_.object_type in
-        let (T delta_object_parser) =
-          match object_.delta_parent with
-          | None ->
-            let delta_object_parser =
-              compute_resulting_delta_object
-                delta_object_parser
-                object_type
-                ~expected_length:object_.object_length
-                buf
-                ~pos
-            in
-            Delta_object_parser.T delta_object_parser
-          | Some delta_parent ->
-            let delta_object_parser =
-              compute_resulting_delta_object
-                delta_object_parser
-                Ref_delta
-                ~expected_length:object_.object_length
-                buf
-                ~pos
-            in
-            let parent_contents = Option.value_exn delta_parent.contents in
-            let delta_object_parser =
-              Delta_object_parser.set_result_as_delta delta_object_parser
-            in
-            let delta_object_parser =
-              Delta_object_parser.with_base_buffer_and_length
-                delta_object_parser
-                object_type
-                parent_contents
-                ~length:(Bigstring.length parent_contents)
-                (* The method below validates that the length of the result is correct. *)
-                Delta_object_parser.compute_result
-            in
-            T delta_object_parser
-        in
-        let sha1_compute = Sha1.Compute.init_or_reset sha1_compute_uninit in
-        let header_len =
-          Object_header_writer.write_from_left
-            object_type_buf
-            ~pos:0
-            object_.object_type
-            ~object_length:(Delta_object_parser.result_len delta_object_parser)
-        in
-        Sha1.Compute.process sha1_compute object_type_buf ~pos:0 ~len:header_len;
-        Sha1.Compute.process
-          sha1_compute
-          (Delta_object_parser.result_buf delta_object_parser)
-          ~pos:0
-          ~len:(Delta_object_parser.result_len delta_object_parser);
-        let sha1_compute = Sha1.Compute.finalise sha1_compute in
-        let sha1_raw =
-          Sha1.Raw.Volatile.non_volatile (Sha1.Compute.get_raw sha1_compute)
-        in
-        Set_once.set_exn object_.sha1 [%here] sha1_raw;
-        match object_.delta_children with
-        | [] -> ()
-        | children ->
-          object_.contents
-          <- Some
-               (Bigstring.sub
-                  (Delta_object_parser.result_buf delta_object_parser)
-                  ~pos:0
-                  ~len:(Delta_object_parser.result_len delta_object_parser));
-          let delta_object_parser = Delta_object_parser.reset delta_object_parser in
-          List.iter children ~f:(fun child ->
-            dfs delta_object_parser sha1_compute_uninit child buf);
-          object_.contents <- None
-    ;;
-
-    let write_index_file ~index_file ~(objects_in_sha1_order : Object.t array) ~pack_sha1 =
-      let items_in_pack = Array.length objects_in_sha1_order in
-      let section_pos = Section_pos.create ~items_in_pack in
-      let max_uint32_offset = (1 lsl 31) - 1 in
-      let uint64_offsets, _ =
-        Array.foldi
-          objects_in_sha1_order
-          ~init:(Int.Map.empty, 0)
-          ~f:(fun key acc object_ ->
-            if object_.pack_pos <= max_uint32_offset
-            then acc
-            else (
-              let map, cnt = acc in
-              Map.add_exn map ~key ~data:cnt, cnt + 1))
-      in
-      let index_file_size =
-        Section_pos.uint64_offset section_pos (Map.length uint64_offsets)
-        + (Sha1.Raw.length * 2)
-      in
-      let%bind fd = Unix.openfile ~mode:[ `Rdwr; `Creat; `Trunc ] index_file in
-      let%map file_mmap =
-        Fd.syscall_in_thread_exn ~name:"git-pack-mmap-file" fd (fun file_descr ->
-          Bigstring_unix.map_file ~shared:true file_descr index_file_size)
-      in
-      Bigstring.unsafe_set_uint32_le file_mmap ~pos:0 1666151679;
-      Bigstring.unsafe_set_uint32_be file_mmap ~pos:4 2;
-      Array.iter objects_in_sha1_order ~f:(fun object_ ->
-        let first_byte =
-          (Sha1.Raw.to_string (Set_once.get_exn object_.sha1 [%here])).[0]
-        in
-        let pos = Section_pos.fanout section_pos first_byte in
-        Bigstring.set_uint32_be_exn
-          file_mmap
-          ~pos
-          (Bigstring.get_uint32_be file_mmap ~pos + 1));
-      for idx = 1 to 255 do
-        let pos = Section_pos.fanout section_pos (Char.of_int_exn idx) in
-        Bigstring.set_uint32_be_exn
-          file_mmap
-          ~pos
-          (Bigstring.get_uint32_be file_mmap ~pos:(pos - 4)
-           + Bigstring.get_uint32_be file_mmap ~pos)
-      done;
-      Array.iteri objects_in_sha1_order ~f:(fun idx object_ ->
-        let pos = Section_pos.sha1 section_pos idx in
-        Bigstring.From_string.blit
-          ~src:(Sha1.Raw.to_string (Set_once.get_exn object_.sha1 [%here]))
-          ~src_pos:0
-          ~dst:file_mmap
-          ~dst_pos:pos
-          ~len:Sha1.Raw.length);
-      Array.iteri objects_in_sha1_order ~f:(fun idx object_ ->
-        let pos = Section_pos.crc32 section_pos idx in
-        Bigstring.set_uint32_be_exn file_mmap ~pos object_.crc32);
-      Array.iteri objects_in_sha1_order ~f:(fun idx object_ ->
-        let pos = Section_pos.offset section_pos idx in
-        let offset_value =
-          if object_.pack_pos <= max_uint32_offset
-          then object_.pack_pos
-          else (
-            let big_offset = Map.find_exn uint64_offsets idx in
-            Bigstring.set_uint64_be_exn
-              file_mmap
-              ~pos:(Section_pos.uint64_offset section_pos big_offset)
-              object_.pack_pos;
-            big_offset lor (1 lsl 31))
-        in
-        Bigstring.unsafe_set_uint32_be file_mmap ~pos offset_value);
-      Bigstring.From_string.blit
-        ~src:(Sha1.Raw.to_string pack_sha1)
-        ~src_pos:0
-        ~dst:file_mmap
-        ~dst_pos:(index_file_size - (Sha1.Raw.length * 2))
-        ~len:Sha1.Raw.length;
-      let sha1_compute =
-        Sha1.Compute.create_uninitialised () |> Sha1.Compute.init_or_reset
-      in
-      Sha1.Compute.process
-        sha1_compute
-        file_mmap
-        ~pos:0
-        ~len:(index_file_size - Sha1.Raw.length);
-      let sha1_compute = Sha1.Compute.finalise sha1_compute in
-      Bigstring.From_bytes.blit
-        ~src:(Sha1.Raw.Volatile.bytes (Sha1.Compute.get_raw sha1_compute))
-        ~src_pos:0
-        ~dst:file_mmap
-        ~dst_pos:(index_file_size - Sha1.Raw.length)
-        ~len:Sha1.Raw.length
-    ;;
-
-    let index_pack ~pack_file ~pack_file_mmap ~items_in_pack =
-      let index_file = String.chop_suffix_exn ~suffix:".pack" pack_file ^ ".idx" in
-      let delta_object_parser = Delta_object_parser.create Do_not_validate_sha1 in
-      let sha1_compute = Sha1.Compute.create_uninitialised () in
-      let objects = index_objects ~pack_file_mmap ~items_in_pack in
-      let objects_in_pack_order = Array.of_list (Hashtbl.data objects) in
-      Array.sort
-        objects_in_pack_order
-        ~compare:(Comparable.lift Int.compare ~f:(fun object_ -> object_.Object.pack_pos));
-      Array.iter objects_in_pack_order ~f:(fun object_ ->
-        match object_.delta_parent with
-        | Some _ -> ()
-        | None -> dfs delta_object_parser sha1_compute object_ pack_file_mmap);
-      let objects_in_sha1_order = Array.of_list (Hashtbl.data objects) in
-      Array.sort
-        objects_in_sha1_order
-        ~compare:
-          (Comparable.lift Sha1.Raw.compare ~f:(fun object_ ->
-             Set_once.get_exn object_.Object.sha1 [%here]));
-      let pack_sha1 =
-        Sha1.Raw.of_string
-          (Bigstring.To_string.sub
-             pack_file_mmap
-             ~pos:(Bigstring.length pack_file_mmap - Sha1.Raw.length)
-             ~len:Sha1.Raw.length)
-      in
-      write_index_file ~index_file ~objects_in_sha1_order ~pack_sha1
-    ;;
-  end
-end
-
 type 'Sha1_validation t =
   { pack_file : string
   ; pack_fd : Fd.t
@@ -570,18 +33,22 @@ type 'Sha1_validation t =
       , [ `No_result ] )
         Delta_object_parser.t
   ; sha1_validation : 'Sha1_validation Sha1_validation.t
-  ; index : Index.t
+  ; index : Index_reader.t
   }
 
 let create ~pack_file sha1_validation =
   let pack_file =
     if String.is_suffix ~suffix:".pack" pack_file then pack_file else pack_file ^ ".pack"
   in
-  with_file pack_file ~f:(fun pack_fd pack_file_size pack_file_mmap ->
+  Util.with_file pack_file ~f:(fun pack_fd pack_file_size pack_file_mmap ->
     let open Deferred.Or_error.Let_syntax in
     let items_in_pack = Bigstring.get_uint32_be pack_file_mmap ~pos:8 in
     let%bind index =
-      Index.open_existing ~pack_file ~pack_file_mmap ~pack_file_size ~items_in_pack
+      Index_reader.open_existing
+        ~pack_file
+        ~pack_file_mmap
+        ~pack_file_size
+        ~items_in_pack
     in
     let result =
       let open Or_error.Let_syntax in
@@ -620,18 +87,20 @@ let index_pack ~pack_file =
   let pack_file =
     if String.is_suffix ~suffix:".pack" pack_file then pack_file else pack_file ^ ".pack"
   in
-  with_file pack_file ~f:(fun (_ : Fd.t) (_pack_file_size : int) pack_file_mmap ->
+  Util.with_file pack_file ~f:(fun (_ : Fd.t) (_pack_file_size : int) pack_file_mmap ->
     let items_in_pack = Bigstring.get_uint32_be pack_file_mmap ~pos:8 in
     Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
-      Index.Builder.index_pack ~pack_file ~pack_file_mmap ~items_in_pack))
+      Index_writer.index_pack ~pack_file ~pack_file_mmap ~items_in_pack))
 ;;
 
-let validate_index t ~index =
-  if index < 0 || index >= t.items_in_pack
-  then
-    raise_s
-      [%message
-        "Invalid value for index" (index : int) ~items_in_pack:(t.items_in_pack : int)]
+let[@cold] raise_invalid_index t ~index =
+  raise_s
+    [%message
+      "Invalid value for index" (index : int) ~items_in_pack:(t.items_in_pack : int)]
+;;
+
+let[@inline] validate_index t ~index =
+  if index < 0 || index >= t.items_in_pack then raise_invalid_index t ~index
 ;;
 
 module Sha1_function = struct
@@ -641,7 +110,7 @@ module Sha1_function = struct
     validate_index t ~index;
     Bigstring.To_bytes.blit
       ~src:t.index.file_mmap
-      ~src_pos:(Index.Section_pos.sha1 t.index.section_pos index)
+      ~src_pos:(Index_offsets.sha1 t.index.offsets index)
       ~dst:(Sha1.Raw.Volatile.bytes result)
       ~dst_pos:0
       ~len:Sha1.Raw.length;
@@ -660,14 +129,14 @@ module Pack_file_object_offset_function = struct
     let offset =
       Bigstring.get_uint32_be
         t.index.file_mmap
-        ~pos:(Index.Section_pos.offset t.index.section_pos index)
+        ~pos:(Index_offsets.offset t.index.offsets index)
     in
     if offset land msb_mask = 0
     then offset
     else
       Bigstring.get_uint64_be_exn
         t.index.file_mmap
-        ~pos:(Index.Section_pos.uint64_offset t.index.section_pos (offset lxor msb_mask))
+        ~pos:(Index_offsets.uint64_offset t.index.offsets (offset lxor msb_mask))
   ;;
 end
 
@@ -675,12 +144,12 @@ let pack_file_object_offset = Pack_file_object_offset_function.impl
 
 let object_type t ~index =
   let pos = pack_file_object_offset t ~index in
-  object_type' t.pack_file_mmap ~pos
+  Low_level_reader.object_type t.pack_file_mmap ~pos
 ;;
 
 let object_length t ~index =
   let pos = pack_file_object_offset t ~index in
-  object_length' t.pack_file_mmap ~pos
+  Low_level_reader.object_length t.pack_file_mmap ~pos
 ;;
 
 module Find_result : sig
@@ -750,23 +219,23 @@ let find_sha1_index_gen =
     let first_byte = sha1_get_char sha1 0 in
     let binary_search_start =
       match first_byte with
-      | '\000' -> Index.Section_pos.sha1 t.index.section_pos 0
+      | '\000' -> Index_offsets.sha1 t.index.offsets 0
       | n ->
-        Index.Section_pos.sha1
-          t.index.section_pos
+        Index_offsets.sha1
+          t.index.offsets
           (Bigstring.get_uint32_be
              t.index.file_mmap
              ~pos:
-               (Index.Section_pos.fanout
-                  t.index.section_pos
+               (Index_offsets.fanout
+                  t.index.offsets
                   (Char.of_int_exn (Char.to_int n - 1))))
     in
     let binary_search_end =
-      Index.Section_pos.sha1
-        t.index.section_pos
+      Index_offsets.sha1
+        t.index.offsets
         (Bigstring.get_uint32_be
            t.index.file_mmap
-           ~pos:(Index.Section_pos.fanout t.index.section_pos first_byte)
+           ~pos:(Index_offsets.fanout t.index.offsets first_byte)
          - 1)
     in
     let pos = ref binary_search_start in
@@ -789,7 +258,7 @@ let find_sha1_index_gen =
     if sha1_equal t sha1_get_char sha1 ~index_pos:!pos ~pos:0
     then
       Find_result.Volatile.some
-        ((!pos - Index.Section_pos.sha1 t.index.section_pos 0) / Sha1.Raw.length)
+        ((!pos - Index_offsets.sha1 t.index.offsets 0) / Sha1.Raw.length)
     else Find_result.Volatile.none
 ;;
 
@@ -808,7 +277,7 @@ module Read_raw_delta_object_function = struct
         ~expected_length
     in
     let (_ : int) =
-      feed_parser_data
+      Util.feed_parser_data
         delta_object_parser
         ~process:Delta_object_parser.feed_result_zlib_inflate
         buf
@@ -823,7 +292,9 @@ module Read_raw_delta_object_function = struct
     match (object_type : [ `Delta ] Pack_object_type.t) with
     | Ofs_delta ->
       let rel_offset =
-        read_variable_length_relative_offset t.pack_file_mmap ~pos:data_start_pos
+        Low_level_reader.read_variable_length_relative_offset
+          t.pack_file_mmap
+          ~pos:data_start_pos
       in
       pos - rel_offset
     | Ref_delta ->
@@ -841,13 +312,13 @@ module Read_raw_delta_object_function = struct
     let data_start_pos =
       Low_level_reader.skip_variable_length_integer t.pack_file_mmap ~pos
     in
-    match object_type' t.pack_file_mmap ~pos with
+    match Low_level_reader.object_type t.pack_file_mmap ~pos with
     | T ((Commit | Tree | Blob | Tag) as object_type) ->
       let delta_object_parser =
         feed_parser_data
           t.delta_object_parser
           object_type
-          ~expected_length:(object_length' t.pack_file_mmap ~pos)
+          ~expected_length:(Low_level_reader.object_length t.pack_file_mmap ~pos)
           t.pack_file_mmap
           data_start_pos
       in
@@ -870,7 +341,7 @@ module Read_raw_delta_object_function = struct
         feed_parser_data
           delta_object_parser
           delta_object_type
-          ~expected_length:(object_length' t.pack_file_mmap ~pos)
+          ~expected_length:(Low_level_reader.object_length t.pack_file_mmap ~pos)
           t.pack_file_mmap
           data_start_pos
       in
@@ -926,7 +397,7 @@ let read_raw_object = Read_raw_object_function.impl
 module Read_object_function = struct
   let feed_parser_data t pos =
     let (_ : int) =
-      feed_parser_data
+      Util.feed_parser_data
         t.base_object_parser
         ~process:Base_object_parser.process
         t.pack_file_mmap
@@ -946,11 +417,11 @@ module Read_object_function = struct
         ~on_tag
     =
     let pos = pack_file_object_offset t ~index in
-    let payload_length = object_length' t.pack_file_mmap ~pos in
+    let payload_length = Low_level_reader.object_length t.pack_file_mmap ~pos in
     let data_start_pos =
       Low_level_reader.skip_variable_length_integer t.pack_file_mmap ~pos
     in
-    match object_type' t.pack_file_mmap ~pos with
+    match Low_level_reader.object_type t.pack_file_mmap ~pos with
     | T ((Commit | Tree | Blob | Tag) as object_type) ->
       Base_object_parser.reset_for_reading
         t.base_object_parser
@@ -1001,7 +472,7 @@ module Size = struct
 
   let impl t ~index =
     let pos = pack_file_object_offset t ~index in
-    let (T pack_object_type) = object_type' t.pack_file_mmap ~pos in
+    let (T pack_object_type) = Low_level_reader.object_type t.pack_file_mmap ~pos in
     let data_start_pos =
       Low_level_reader.skip_variable_length_integer t.pack_file_mmap ~pos
     in
@@ -1012,7 +483,7 @@ module Size = struct
         Low_level_reader.skip_variable_length_integer t.pack_file_mmap ~pos:data_start_pos
       | Ref_delta -> data_start_pos + Sha1.Raw.length
     in
-    let delta_size = object_length' t.pack_file_mmap ~pos in
+    let delta_size = Low_level_reader.object_length t.pack_file_mmap ~pos in
     let delta_object_parser =
       Delta_object_parser.begin_zlib_inflate_into_result
         t.delta_object_parser
@@ -1020,7 +491,7 @@ module Size = struct
         ~expected_length:delta_size
     in
     let data_length =
-      feed_parser_data
+      Util.feed_parser_data
         delta_object_parser
         ~process:Delta_object_parser.feed_result_zlib_inflate
         t.pack_file_mmap
