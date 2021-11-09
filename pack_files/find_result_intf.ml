@@ -19,24 +19,28 @@ open! Core
 open! Async
 open! Import
 
-type t
+module type Volatile = sig
+  (** Do not keep references to instances of this type as they will be mutated
+      on every call to [find_sha1_index]. *)
+  type t = private
+    | None
+    | Some of { mutable index : int }
+  [@@deriving sexp_of]
 
-val open_existing
-  :  pack_file:string
-  -> pack_file_mmap:Bigstring.t
-  -> pack_file_size:int
-  -> items_in_pack:int
-  -> t Or_error.t Deferred.t
+  val index_exn : t -> int
+end
 
-(** Returns the sha1 corresponding to the object with the provided index position. *)
-val sha1 : t -> index:int -> Sha1.Raw.Volatile.t
+module type Public = sig
+  module Volatile : Volatile
+end
 
-(** Returns the position in the pack file where the object with the provided index position
-    can be found. *)
-val pack_file_offset : t -> index:int -> int
+module type Find_result = sig
+  module type Public = Public
 
-(** Search for an object with the given SHA1 hash in the pack. *)
-val find_sha1_index : t -> Sha1.Raw.t -> Find_result.Volatile.t
+  module Volatile : sig
+    include Volatile
 
-(** Search for an object with the given SHA1 hash in the pack. *)
-val find_sha1_index' : t -> Sha1.Raw.Volatile.t -> Find_result.Volatile.t
+    val none : t
+    val some : int -> t
+  end
+end

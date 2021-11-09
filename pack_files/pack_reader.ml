@@ -93,54 +93,9 @@ let index_pack ~pack_file =
       Index_writer.index_pack ~pack_file ~pack_file_mmap ~items_in_pack))
 ;;
 
-let[@cold] raise_invalid_index t ~index =
-  raise_s
-    [%message
-      "Invalid value for index" (index : int) ~items_in_pack:(t.items_in_pack : int)]
-;;
-
-let[@inline] validate_index t ~index =
-  if index < 0 || index >= t.items_in_pack then raise_invalid_index t ~index
-;;
-
-module Sha1_function = struct
-  let result = Sha1.Raw.Volatile.create ()
-
-  let impl t ~index =
-    validate_index t ~index;
-    Bigstring.To_bytes.blit
-      ~src:t.index.file_mmap
-      ~src_pos:(Index_offsets.sha1 t.index.offsets index)
-      ~dst:(Sha1.Raw.Volatile.bytes result)
-      ~dst_pos:0
-      ~len:Sha1.Raw.length;
-    result
-  ;;
-end
-
-let sha1 = Sha1_function.impl
 let items_in_pack t = t.items_in_pack
-
-module Pack_file_object_offset_function = struct
-  let msb_mask = 1 lsl 31
-
-  let impl t ~index =
-    validate_index t ~index;
-    let offset =
-      Bigstring.get_uint32_be
-        t.index.file_mmap
-        ~pos:(Index_offsets.offset t.index.offsets index)
-    in
-    if offset land msb_mask = 0
-    then offset
-    else
-      Bigstring.get_uint64_be_exn
-        t.index.file_mmap
-        ~pos:(Index_offsets.uint64_offset t.index.offsets (offset lxor msb_mask))
-  ;;
-end
-
-let pack_file_object_offset = Pack_file_object_offset_function.impl
+let sha1 t ~index = Index_reader.sha1 t.index ~index
+let pack_file_object_offset t ~index = Index_reader.pack_file_offset t.index ~index
 
 let object_type t ~index =
   let pos = pack_file_object_offset t ~index in
@@ -152,121 +107,8 @@ let object_length t ~index =
   Low_level_reader.object_length t.pack_file_mmap ~pos
 ;;
 
-module Find_result : sig
-  module Volatile : sig
-    type t = private
-      | None
-      | Some of { mutable index : int }
-    [@@deriving sexp_of]
-
-    val none : t
-    val some : int -> t
-    val index_exn : t -> int
-  end
-end = struct
-  module Volatile = struct
-    type t =
-      | None
-      | Some of { mutable index : int }
-
-    let sexp_of_t = function
-      | None -> Sexp.List []
-      | Some { index } -> Sexp.List [ Sexp.Atom (Int.to_string index) ]
-    ;;
-
-    let none = None
-
-    let some =
-      let value = Some { index = -1 } in
-      fun index ->
-        (match value with
-         | Some record -> record.index <- index
-         | None -> assert false);
-        value
-    ;;
-
-    let index_exn = function
-      | None -> failwith "SHA1 not present in pack file"
-      | Some { index } -> index
-    ;;
-  end
-end
-
-let find_sha1_index_gen =
-  let rec sha1_greater_than_or_equal t sha1_get_char sha1 ~index_pos ~pos =
-    if pos = Sha1.Raw.length
-    then true
-    else (
-      let from_sha1 = Char.to_int (sha1_get_char sha1 pos) in
-      let from_index = Bigstring.get_uint8 t.index.file_mmap ~pos:(index_pos + pos) in
-      if from_sha1 > from_index
-      then true
-      else if from_sha1 < from_index
-      then false
-      else sha1_greater_than_or_equal t sha1_get_char sha1 ~index_pos ~pos:(pos + 1))
-  in
-  let rec sha1_equal t sha1_get_char sha1 ~index_pos ~pos =
-    if pos = Sha1.Raw.length
-    then true
-    else (
-      let from_sha1 = Char.to_int (sha1_get_char sha1 pos) in
-      let from_index = Bigstring.get_uint8 t.index.file_mmap ~pos:(index_pos + pos) in
-      if from_sha1 <> from_index
-      then false
-      else sha1_equal t sha1_get_char sha1 ~index_pos ~pos:(pos + 1))
-  in
-  fun t sha1_get_char sha1 ->
-    let first_byte = sha1_get_char sha1 0 in
-    let binary_search_start =
-      match first_byte with
-      | '\000' -> Index_offsets.sha1 t.index.offsets 0
-      | n ->
-        Index_offsets.sha1
-          t.index.offsets
-          (Bigstring.get_uint32_be
-             t.index.file_mmap
-             ~pos:
-               (Index_offsets.fanout
-                  t.index.offsets
-                  (Char.of_int_exn (Char.to_int n - 1))))
-    in
-    let binary_search_end =
-      Index_offsets.sha1
-        t.index.offsets
-        (Bigstring.get_uint32_be
-           t.index.file_mmap
-           ~pos:(Index_offsets.fanout t.index.offsets first_byte)
-         - 1)
-    in
-    let pos = ref binary_search_start in
-    let step = ref Sha1.Raw.length in
-    while !step <= binary_search_end - binary_search_start do
-      step := !step lsl 1
-    done;
-    step := !step lsr 1;
-    while !step >= Sha1.Raw.length do
-      if !pos + !step <= binary_search_end
-      && sha1_greater_than_or_equal
-           t
-           sha1_get_char
-           sha1
-           ~index_pos:(!pos + !step)
-           ~pos:0
-      then pos := !pos + !step;
-      step := !step lsr 1
-    done;
-    if sha1_equal t sha1_get_char sha1 ~index_pos:!pos ~pos:0
-    then
-      Find_result.Volatile.some
-        ((!pos - Index_offsets.sha1 t.index.offsets 0) / Sha1.Raw.length)
-    else Find_result.Volatile.none
-;;
-
-let find_sha1_index t sha1 = find_sha1_index_gen t String.get (Sha1.Raw.to_string sha1)
-
-let find_sha1_index' t sha1 =
-  find_sha1_index_gen t Bytes.get (Sha1.Raw.Volatile.bytes sha1)
-;;
+let find_sha1_index t sha1 = Index_reader.find_sha1_index t.index sha1
+let find_sha1_index' t sha1 = Index_reader.find_sha1_index' t.index sha1
 
 module Read_raw_delta_object_function = struct
   let feed_parser_data delta_object_parser object_type ~expected_length buf pos =

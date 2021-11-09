@@ -18,25 +18,31 @@
 open! Core
 open! Async
 open! Import
+include Find_result_intf
 
-type t
+module Volatile = struct
+  type t =
+    | None
+    | Some of { mutable index : int }
 
-val open_existing
-  :  pack_file:string
-  -> pack_file_mmap:Bigstring.t
-  -> pack_file_size:int
-  -> items_in_pack:int
-  -> t Or_error.t Deferred.t
+  let sexp_of_t = function
+    | None -> Sexp.List []
+    | Some { index } -> Sexp.List [ Sexp.Atom (Int.to_string index) ]
+  ;;
 
-(** Returns the sha1 corresponding to the object with the provided index position. *)
-val sha1 : t -> index:int -> Sha1.Raw.Volatile.t
+  let none = None
 
-(** Returns the position in the pack file where the object with the provided index position
-    can be found. *)
-val pack_file_offset : t -> index:int -> int
+  let some =
+    let value = Some { index = -1 } in
+    fun index ->
+      (match value with
+       | Some record -> record.index <- index
+       | None -> assert false);
+      value
+  ;;
 
-(** Search for an object with the given SHA1 hash in the pack. *)
-val find_sha1_index : t -> Sha1.Raw.t -> Find_result.Volatile.t
-
-(** Search for an object with the given SHA1 hash in the pack. *)
-val find_sha1_index' : t -> Sha1.Raw.Volatile.t -> Find_result.Volatile.t
+  let index_exn = function
+    | None -> failwith "SHA1 not present in pack file"
+    | Some { index } -> index
+  ;;
+end

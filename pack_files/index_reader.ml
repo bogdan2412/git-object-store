@@ -24,6 +24,7 @@ type t =
   ; fd : Fd.t
   ; file_size : int
   ; file_mmap : Bigstring.t
+  ; items_in_pack : int
   ; offsets : Index_offsets.t
   }
 
@@ -69,8 +70,119 @@ let open_existing ~pack_file ~pack_file_mmap ~pack_file_size ~items_in_pack =
         ; fd
         ; file_size
         ; file_mmap
+        ; items_in_pack
         ; offsets = Index_offsets.create ~items_in_pack
         }
     in
     Deferred.return result)
+;;
+
+let[@cold] raise_invalid_index t ~index =
+  raise_s
+    [%message
+      "Invalid value for index" (index : int) ~items_in_pack:(t.items_in_pack : int)]
+;;
+
+let[@inline] validate_index t ~index =
+  if index < 0 || index >= t.items_in_pack then raise_invalid_index t ~index
+;;
+
+let sha1 =
+  let result = Sha1.Raw.Volatile.create () in
+  fun t ~index ->
+    validate_index t ~index;
+    Bigstring.To_bytes.blit
+      ~src:t.file_mmap
+      ~src_pos:(Index_offsets.sha1 t.offsets index)
+      ~dst:(Sha1.Raw.Volatile.bytes result)
+      ~dst_pos:0
+      ~len:Sha1.Raw.length;
+    result
+;;
+
+let pack_file_offset =
+  let msb_mask = 1 lsl 31 in
+  fun t ~index ->
+    validate_index t ~index;
+    let offset =
+      Bigstring.get_uint32_be t.file_mmap ~pos:(Index_offsets.offset t.offsets index)
+    in
+    if offset land msb_mask = 0
+    then offset
+    else
+      Bigstring.get_uint64_be_exn
+        t.file_mmap
+        ~pos:(Index_offsets.uint64_offset t.offsets (offset lxor msb_mask))
+;;
+
+let find_sha1_index_gen =
+  let rec sha1_greater_than_or_equal t sha1_get_char sha1 ~index_pos ~pos =
+    if pos = Sha1.Raw.length
+    then true
+    else (
+      let from_sha1 = Char.to_int (sha1_get_char sha1 pos) in
+      let from_index = Bigstring.get_uint8 t.file_mmap ~pos:(index_pos + pos) in
+      if from_sha1 > from_index
+      then true
+      else if from_sha1 < from_index
+      then false
+      else sha1_greater_than_or_equal t sha1_get_char sha1 ~index_pos ~pos:(pos + 1))
+  in
+  let rec sha1_equal t sha1_get_char sha1 ~index_pos ~pos =
+    if pos = Sha1.Raw.length
+    then true
+    else (
+      let from_sha1 = Char.to_int (sha1_get_char sha1 pos) in
+      let from_index = Bigstring.get_uint8 t.file_mmap ~pos:(index_pos + pos) in
+      if from_sha1 <> from_index
+      then false
+      else sha1_equal t sha1_get_char sha1 ~index_pos ~pos:(pos + 1))
+  in
+  fun t sha1_get_char sha1 ->
+    let first_byte = sha1_get_char sha1 0 in
+    let binary_search_start =
+      match first_byte with
+      | '\000' -> Index_offsets.sha1 t.offsets 0
+      | n ->
+        Index_offsets.sha1
+          t.offsets
+          (Bigstring.get_uint32_be
+             t.file_mmap
+             ~pos:(Index_offsets.fanout t.offsets (Char.of_int_exn (Char.to_int n - 1))))
+    in
+    let binary_search_end =
+      Index_offsets.sha1
+        t.offsets
+        (Bigstring.get_uint32_be
+           t.file_mmap
+           ~pos:(Index_offsets.fanout t.offsets first_byte)
+         - 1)
+    in
+    let pos = ref binary_search_start in
+    let step = ref Sha1.Raw.length in
+    while !step <= binary_search_end - binary_search_start do
+      step := !step lsl 1
+    done;
+    step := !step lsr 1;
+    while !step >= Sha1.Raw.length do
+      if !pos + !step <= binary_search_end
+      && sha1_greater_than_or_equal
+           t
+           sha1_get_char
+           sha1
+           ~index_pos:(!pos + !step)
+           ~pos:0
+      then pos := !pos + !step;
+      step := !step lsr 1
+    done;
+    if sha1_equal t sha1_get_char sha1 ~index_pos:!pos ~pos:0
+    then
+      Find_result.Volatile.some ((!pos - Index_offsets.sha1 t.offsets 0) / Sha1.Raw.length)
+    else Find_result.Volatile.none
+;;
+
+let find_sha1_index t sha1 = find_sha1_index_gen t String.get (Sha1.Raw.to_string sha1)
+
+let find_sha1_index' t sha1 =
+  find_sha1_index_gen t Bytes.get (Sha1.Raw.Volatile.bytes sha1)
 ;;
