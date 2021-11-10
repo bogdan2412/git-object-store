@@ -67,3 +67,63 @@ let with_file file_path ~f =
       in
       f fd file_size file_mmap)
 ;;
+
+module Make_sha1_binary_search (Sha1M : sig
+    type t
+
+    val get : t -> int -> char
+  end) =
+struct
+  let get_uint8 sha1m pos = Char.to_int (Sha1M.get sha1m pos)
+
+  let sha1_greater_than_or_equal =
+    let rec sha1_greater_than_or_equal sha1m ~index_buf ~index_pos ~pos =
+      if pos = Sha1.Raw.length
+      then true
+      else (
+        let from_sha1 = get_uint8 sha1m pos in
+        let from_index = Bigstring.get_uint8 index_buf ~pos:(index_pos + pos) in
+        if from_sha1 > from_index
+        then true
+        else if from_sha1 < from_index
+        then false
+        else sha1_greater_than_or_equal sha1m ~index_buf ~index_pos ~pos:(pos + 1))
+    in
+    fun sha1m ~index_buf ~index_pos ->
+      sha1_greater_than_or_equal sha1m ~index_buf ~index_pos ~pos:0
+  ;;
+
+  let sha1_equal =
+    let rec sha1_equal sha1m ~index_buf ~index_pos ~pos =
+      if pos = Sha1.Raw.length
+      then true
+      else (
+        let from_sha1 = get_uint8 sha1m pos in
+        let from_index = Bigstring.get_uint8 index_buf ~pos:(index_pos + pos) in
+        if from_sha1 <> from_index
+        then false
+        else sha1_equal sha1m ~index_buf ~index_pos ~pos:(pos + 1))
+    in
+    fun sha1m ~index_buf ~index_pos -> sha1_equal sha1m ~index_buf ~index_pos ~pos:0
+  ;;
+
+  let sha1_binary_search ~index_buf ~index_pos ~index_element_count sha1m =
+    let index_len = index_element_count * Sha1.Raw.length in
+    let stop = index_pos + index_len in
+    let pos = ref index_pos in
+    let step = ref Sha1.Raw.length in
+    while !step <= index_len do
+      step := !step lsl 1
+    done;
+    step := !step lsr 1;
+    while !step >= Sha1.Raw.length do
+      if !pos + !step < stop
+      && sha1_greater_than_or_equal sha1m ~index_buf ~index_pos:(!pos + !step)
+      then pos := !pos + !step;
+      step := !step lsr 1
+    done;
+    if sha1_equal sha1m ~index_buf ~index_pos:!pos
+    then Find_result.Volatile.some ((!pos - index_pos) / Sha1.Raw.length)
+    else Find_result.Volatile.none
+  ;;
+end
