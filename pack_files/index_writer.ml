@@ -19,6 +19,53 @@ open! Core
 open! Async
 open! Import
 
+module Object_data : sig
+  type t = private
+    { mutable buf : Bigstring.t
+    ; mutable len : int
+    }
+  [@@deriving sexp_of]
+
+  val create : buf_len:int -> t
+  val blit_in : t -> Bigstring.t -> len:int -> unit
+end = struct
+  type t =
+    { mutable buf : Bigstring.t
+    ; mutable len : int
+    }
+
+  let sexp_of_t t = [%sexp_of: Bigstring.t] (Bigstring.sub t.buf ~pos:0 ~len:t.len)
+  let create ~buf_len = { buf = Bigstring.create buf_len; len = 0 }
+
+  let blit_in t buf ~len =
+    (match Bigstring.length t.buf < len with
+     | true -> t.buf <- Bigstring.create len
+     | false -> ());
+    Bigstring.blit ~src:buf ~src_pos:0 ~dst:t.buf ~dst_pos:0 ~len;
+    t.len <- len
+  ;;
+end
+
+module Object_data_pool : sig
+  type t
+
+  val create : unit -> t
+  val lease : t -> length_hint:int -> Object_data.t
+  val free : t -> Object_data.t -> unit
+end = struct
+  type t = Object_data.t Stack.t
+
+  let create () = Stack.create ()
+
+  let lease t ~length_hint =
+    match Stack.is_empty t with
+    | true -> Object_data.create ~buf_len:length_hint
+    | false -> Stack.pop_exn t
+  ;;
+
+  let free t object_data = Stack.push t object_data
+end
+
 module Object = struct
   type t =
     { pack_pos : int
@@ -30,7 +77,7 @@ module Object = struct
     ; sha1 : Sha1.Raw.t Set_once.t
     ; delta_parent : t option
     ; mutable delta_children : t list
-    ; mutable contents : Bigstring.t option
+    ; mutable contents : Object_data.t option
     }
 
   [@@@ocaml.warning "-32"]
@@ -66,7 +113,7 @@ module Object = struct
                                                                                       option)
       ; delta_children =
           (List.map delta_children ~f:(fun delta_child -> delta_child.pack_pos) : int list)
-      ; contents : (Bigstring.t option[@sexp.option])
+      ; contents : (Object_data.t option[@sexp.option])
       }]
   ;;
 
@@ -74,7 +121,14 @@ module Object = struct
 end
 
 let index_objects =
-  let rec index_objects_loop ~objects ~zlib_inflate ~items_left buf ~pos =
+  let rec index_objects_loop
+            ~objects_in_pack_order
+            ~objects_by_offset
+            ~zlib_inflate
+            ~items_left
+            buf
+            ~pos
+    =
     if items_left = 0
     then pos
     else (
@@ -93,7 +147,7 @@ let index_objects =
           in
           let delta_parent_pos = pos - rel_offset in
           let (delta_parent_object : Object.t) =
-            Hashtbl.find_exn objects delta_parent_pos
+            Hashtbl.find_exn objects_by_offset delta_parent_pos
           in
           let object_type = delta_parent_object.object_type in
           ( Low_level_reader.skip_variable_length_integer buf ~pos:data_start_pos
@@ -129,32 +183,38 @@ let index_objects =
         ; contents = None
         }
       in
-      Hashtbl.add_exn objects ~key:pos ~data:object_;
+      Queue.enqueue objects_in_pack_order object_;
+      Hashtbl.add_exn objects_by_offset ~key:pos ~data:object_;
       Option.iter delta_parent ~f:(fun delta_parent ->
         delta_parent.delta_children <- object_ :: delta_parent.delta_children);
       index_objects_loop
-        ~objects
+        ~objects_in_pack_order
+        ~objects_by_offset
         ~zlib_inflate
         ~items_left:(items_left - 1)
         buf
         ~pos:(data_start_pos + data_length))
   in
   fun ~pack_file_mmap ~items_in_pack ->
-    let objects = Int.Table.create () in
+    let objects_in_pack_order = Queue.create () in
+    let objects_by_offset = Int.Table.create () in
     let zlib_inflate =
       Zlib.Inflate.create_uninitialised
         ~on_data_chunk:(fun (_ : Bigstring.t) ~pos:(_ : int) ~len:(_ : int) -> ())
     in
     let pos =
       index_objects_loop
-        ~objects
+        ~objects_in_pack_order
+        ~objects_by_offset
         ~zlib_inflate
         ~items_left:items_in_pack
         pack_file_mmap
         ~pos:12
     in
     assert (pos = Bigstring.length pack_file_mmap - Sha1.Raw.length);
-    objects
+    Queue.iter objects_in_pack_order ~f:(fun object_ ->
+      object_.delta_children <- List.rev object_.delta_children);
+    objects_in_pack_order
 ;;
 
 let compute_resulting_delta_object
@@ -185,7 +245,7 @@ let compute_resulting_delta_object
 
 let rec dfs =
   let object_type_buf = Bigstring.create 32 in
-  fun delta_object_parser sha1_compute_uninit (object_ : Object.t) buf ->
+  fun delta_object_parser object_data_pool sha1_compute_uninit (object_ : Object.t) buf ->
     let pos = object_.pack_data_start_pos in
     let object_type = Pack_object_type.of_object_type object_.object_type in
     let (T delta_object_parser) =
@@ -217,8 +277,8 @@ let rec dfs =
           Delta_object_parser.with_base_buffer_and_length
             delta_object_parser
             object_type
-            parent_contents
-            ~length:(Bigstring.length parent_contents)
+            parent_contents.buf
+            ~length:parent_contents.len
             (* The method below validates that the length of the result is correct. *)
             Delta_object_parser.compute_result
         in
@@ -244,15 +304,17 @@ let rec dfs =
     match object_.delta_children with
     | [] -> ()
     | children ->
-      object_.contents
-      <- Some
-           (Bigstring.sub
-              (Delta_object_parser.result_buf delta_object_parser)
-              ~pos:0
-              ~len:(Delta_object_parser.result_len delta_object_parser));
+      let result_len = Delta_object_parser.result_len delta_object_parser in
+      let object_data = Object_data_pool.lease object_data_pool ~length_hint:result_len in
+      Object_data.blit_in
+        object_data
+        (Delta_object_parser.result_buf delta_object_parser)
+        ~len:result_len;
+      object_.contents <- Some object_data;
       let delta_object_parser = Delta_object_parser.reset delta_object_parser in
       List.iter children ~f:(fun child ->
-        dfs delta_object_parser sha1_compute_uninit child buf);
+        dfs delta_object_parser object_data_pool sha1_compute_uninit child buf);
+      Object_data_pool.free object_data_pool object_data;
       object_.contents <- None
 ;;
 
@@ -260,16 +322,13 @@ let write_index_file ~index_file ~(objects_in_sha1_order : Object.t array) ~pack
   let items_in_pack = Array.length objects_in_sha1_order in
   let offsets = Index_offsets.create ~items_in_pack in
   let max_uint32_offset = (1 lsl 31) - 1 in
-  let uint64_offsets, _ =
-    Array.foldi objects_in_sha1_order ~init:(Int.Map.empty, 0) ~f:(fun key acc object_ ->
-      if object_.pack_pos <= max_uint32_offset
-      then acc
-      else (
-        let map, cnt = acc in
-        Map.add_exn map ~key ~data:cnt, cnt + 1))
-  in
+  let uint64_offsets = Int.Table.create () in
+  Array.iteri objects_in_sha1_order ~f:(fun idx object_ ->
+    if object_.pack_pos > max_uint32_offset
+    then Hashtbl.add_exn uint64_offsets ~key:idx ~data:(Hashtbl.length uint64_offsets));
   let index_file_size =
-    Index_offsets.uint64_offset offsets (Map.length uint64_offsets) + (Sha1.Raw.length * 2)
+    Index_offsets.uint64_offset offsets (Hashtbl.length uint64_offsets)
+    + (Sha1.Raw.length * 2)
   in
   let%bind fd = Unix.openfile ~mode:[ `Rdwr; `Creat; `Trunc ] index_file in
   let%map file_mmap =
@@ -310,7 +369,7 @@ let write_index_file ~index_file ~(objects_in_sha1_order : Object.t array) ~pack
       if object_.pack_pos <= max_uint32_offset
       then object_.pack_pos
       else (
-        let big_offset = Map.find_exn uint64_offsets idx in
+        let big_offset = Hashtbl.find_exn uint64_offsets idx in
         Bigstring.set_uint64_be_exn
           file_mmap
           ~pos:(Index_offsets.uint64_offset offsets big_offset)
@@ -342,17 +401,15 @@ let write_index_file ~index_file ~(objects_in_sha1_order : Object.t array) ~pack
 let write_index ~pack_file ~pack_file_mmap ~items_in_pack =
   let index_file = String.chop_suffix_exn ~suffix:".pack" pack_file ^ ".idx" in
   let delta_object_parser = Delta_object_parser.create Do_not_validate_sha1 in
+  let object_data_pool = Object_data_pool.create () in
   let sha1_compute = Sha1.Compute.create_uninitialised () in
-  let objects = index_objects ~pack_file_mmap ~items_in_pack in
-  let objects_in_pack_order = Array.of_list (Hashtbl.data objects) in
-  Array.sort
-    objects_in_pack_order
-    ~compare:(Comparable.lift Int.compare ~f:(fun object_ -> object_.Object.pack_pos));
-  Array.iter objects_in_pack_order ~f:(fun object_ ->
+  let objects_in_pack_order = index_objects ~pack_file_mmap ~items_in_pack in
+  Queue.iter objects_in_pack_order ~f:(fun object_ ->
     match object_.delta_parent with
     | Some _ -> ()
-    | None -> dfs delta_object_parser sha1_compute object_ pack_file_mmap);
-  let objects_in_sha1_order = Array.of_list (Hashtbl.data objects) in
+    | None ->
+      dfs delta_object_parser object_data_pool sha1_compute object_ pack_file_mmap);
+  let objects_in_sha1_order = Queue.to_array objects_in_pack_order in
   Array.sort
     objects_in_sha1_order
     ~compare:
