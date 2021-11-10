@@ -130,74 +130,125 @@ let pack_file_offset =
         ~pos:(Index_offsets.uint64_offset t.offsets (offset lxor msb_mask))
 ;;
 
-let find_sha1_index_gen =
-  let rec sha1_greater_than_or_equal t sha1_get_char sha1 ~index_pos ~pos =
-    if pos = Sha1.Raw.length
-    then true
-    else (
-      let from_sha1 = Char.to_int (sha1_get_char sha1 pos) in
-      let from_index = Bigstring.get_uint8 t.file_mmap ~pos:(index_pos + pos) in
-      if from_sha1 > from_index
+module Make_sha1_binary_search (Sha1M : sig
+    type t
+
+    val get : t -> int -> char
+  end) : sig
+  (** Search for the given [Sha1M.t] in an memory mapped index file.
+
+      [index_buf] corresponds to the memory mapped index file buffer.
+      [index_pos] corresponds to the position in [index_buf] where the first element in
+      the searched range starts.
+      [index_element_count] corresponds to the number of elements in the searched range.
+
+      Element [0] occupies bytes [index_pos] to [index_pos + Sha1.Raw.length - 1] inclusive
+      in [index_buf]. The last element in the range, [index_element_count - 1], occupies
+      bytes [index_pos + (index_element_count - 1) * Sha1.Raw.length] to
+      [index_pos + index_element_count * Sha1.Raw.length - 1] inclusive.
+
+      The returned value will be in the range [0 .. index_element_count - 1] assuming that
+      the [Sha1M.t] value is found in the range. *)
+  val sha1_binary_search
+    :  index_buf:Bigstring.t
+    -> index_pos:int
+    -> index_element_count:int
+    -> Sha1M.t
+    -> Find_result.Volatile.t
+end = struct
+  let get_uint8 sha1m pos = Char.to_int (Sha1M.get sha1m pos)
+
+  let sha1_greater_than_or_equal =
+    let rec sha1_greater_than_or_equal sha1m ~index_buf ~index_pos ~pos =
+      if pos = Sha1.Raw.length
       then true
-      else if from_sha1 < from_index
-      then false
-      else sha1_greater_than_or_equal t sha1_get_char sha1 ~index_pos ~pos:(pos + 1))
-  in
-  let rec sha1_equal t sha1_get_char sha1 ~index_pos ~pos =
-    if pos = Sha1.Raw.length
-    then true
-    else (
-      let from_sha1 = Char.to_int (sha1_get_char sha1 pos) in
-      let from_index = Bigstring.get_uint8 t.file_mmap ~pos:(index_pos + pos) in
-      if from_sha1 <> from_index
-      then false
-      else sha1_equal t sha1_get_char sha1 ~index_pos ~pos:(pos + 1))
-  in
-  fun t sha1_get_char sha1 ->
-    let first_byte = sha1_get_char sha1 0 in
-    let binary_search_start =
-      match first_byte with
-      | '\000' -> Index_offsets.sha1 t.offsets 0
-      | n ->
-        Index_offsets.sha1
-          t.offsets
-          (Bigstring.get_uint32_be
-             t.file_mmap
-             ~pos:(Index_offsets.fanout t.offsets (Char.of_int_exn (Char.to_int n - 1))))
+      else (
+        let from_sha1 = get_uint8 sha1m pos in
+        let from_index = Bigstring.get_uint8 index_buf ~pos:(index_pos + pos) in
+        if from_sha1 > from_index
+        then true
+        else if from_sha1 < from_index
+        then false
+        else sha1_greater_than_or_equal sha1m ~index_buf ~index_pos ~pos:(pos + 1))
     in
-    let binary_search_end =
-      Index_offsets.sha1
-        t.offsets
-        (Bigstring.get_uint32_be
-           t.file_mmap
-           ~pos:(Index_offsets.fanout t.offsets first_byte)
-         - 1)
+    fun sha1m ~index_buf ~index_pos ->
+      sha1_greater_than_or_equal sha1m ~index_buf ~index_pos ~pos:0
+  ;;
+
+  let sha1_equal =
+    let rec sha1_equal sha1m ~index_buf ~index_pos ~pos =
+      if pos = Sha1.Raw.length
+      then true
+      else (
+        let from_sha1 = get_uint8 sha1m pos in
+        let from_index = Bigstring.get_uint8 index_buf ~pos:(index_pos + pos) in
+        if from_sha1 <> from_index
+        then false
+        else sha1_equal sha1m ~index_buf ~index_pos ~pos:(pos + 1))
     in
-    let pos = ref binary_search_start in
+    fun sha1m ~index_buf ~index_pos -> sha1_equal sha1m ~index_buf ~index_pos ~pos:0
+  ;;
+
+  let sha1_binary_search ~index_buf ~index_pos ~index_element_count sha1m =
+    let index_len = index_element_count * Sha1.Raw.length in
+    let stop = index_pos + index_len in
+    let pos = ref index_pos in
     let step = ref Sha1.Raw.length in
-    while !step <= binary_search_end - binary_search_start do
+    while !step <= index_len do
       step := !step lsl 1
     done;
     step := !step lsr 1;
     while !step >= Sha1.Raw.length do
-      if !pos + !step <= binary_search_end
-      && sha1_greater_than_or_equal
-           t
-           sha1_get_char
-           sha1
-           ~index_pos:(!pos + !step)
-           ~pos:0
+      if !pos + !step < stop
+      && sha1_greater_than_or_equal sha1m ~index_buf ~index_pos:(!pos + !step)
       then pos := !pos + !step;
       step := !step lsr 1
     done;
-    if sha1_equal t sha1_get_char sha1 ~index_pos:!pos ~pos:0
-    then
-      Find_result.Volatile.some ((!pos - Index_offsets.sha1 t.offsets 0) / Sha1.Raw.length)
+    if sha1_equal sha1m ~index_buf ~index_pos:!pos
+    then Find_result.Volatile.some ((!pos - index_pos) / Sha1.Raw.length)
     else Find_result.Volatile.none
-;;
+  ;;
+end
 
-let find_sha1_index t sha1 = find_sha1_index_gen t String.get (Sha1.Raw.to_string sha1)
+module Make_find_sha1_index (Sha1M : sig
+    type t
+
+    val get : t -> int -> char
+  end) =
+struct
+  include Make_sha1_binary_search (Sha1M)
+
+  let find_sha1_index t sha1m =
+    let first_byte = Sha1M.get sha1m 0 in
+    let index_lower_bound =
+      match first_byte with
+      | '\000' -> 0
+      | n ->
+        Bigstring.get_uint32_be
+          t.file_mmap
+          ~pos:(Index_offsets.fanout t.offsets (Char.of_int_exn (Char.to_int n - 1)))
+    in
+    let index_search_candidates =
+      Bigstring.get_uint32_be t.file_mmap ~pos:(Index_offsets.fanout t.offsets first_byte)
+      - index_lower_bound
+    in
+    match
+      sha1_binary_search
+        ~index_buf:t.file_mmap
+        ~index_pos:(Index_offsets.sha1 t.offsets index_lower_bound)
+        ~index_element_count:index_search_candidates
+        sha1m
+    with
+    | None -> Find_result.Volatile.none
+    | Some { index } -> Find_result.Volatile.some (index_lower_bound + index)
+  ;;
+end
+
+module Find_sha1_index = Make_find_sha1_index (String)
+module Find_sha1_index' = Make_find_sha1_index (Bytes)
+
+let find_sha1_index t sha1 = Find_sha1_index.find_sha1_index t (Sha1.Raw.to_string sha1)
 
 let find_sha1_index' t sha1 =
-  find_sha1_index_gen t Bytes.get (Sha1.Raw.Volatile.bytes sha1)
+  Find_sha1_index'.find_sha1_index t (Sha1.Raw.Volatile.bytes sha1)
 ;;
