@@ -94,6 +94,10 @@ end
     Raises if [index] is outside of the range [0 .. items_in_pack - 1]. *)
 val size : _ t -> index:int -> Size.Volatile.t
 
+module Low_level : sig
+  val index : _ t -> Index_reader.t
+end
+
 module For_testing : sig
   val print_out_pack_file : string -> unit Deferred.t
 end

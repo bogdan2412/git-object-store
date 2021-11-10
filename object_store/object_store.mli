@@ -36,6 +36,13 @@ val create
   -> 'Sha1_validation Sha1_validation.t
   -> 'Sha1_validation t Or_error.t Deferred.t
 
+(** Create a [multi-pack-index] file indexing objects across all pack files in the given
+    [object_directory]. *)
+val write_multi_pack_index
+  :  object_directory:string
+  -> preferred_pack:string option
+  -> unit Or_error.t Deferred.t
+
 val object_directory : _ t -> string
 
 module Find_result : sig

@@ -381,6 +381,10 @@ end
 
 let size = Size.impl
 
+module Low_level = struct
+  let index t = t.index
+end
+
 module For_testing = struct
   let print_out_pack_file pack_file =
     let%bind t = create ~pack_file Validate_sha1 >>| ok_exn in
