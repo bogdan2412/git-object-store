@@ -139,6 +139,55 @@ let%test_module "Multi_pack_reverse_index_writer" =
         in
         printf "%S" reverse_index_contents;
         Deferred.unit
+      | `Parsed ->
+        let%map reverse_index =
+          Multi_pack_reverse_index_reader.open_existing multi_pack_index >>| ok_exn
+        in
+        let object_count = Multi_pack_index_reader.object_count multi_pack_index in
+        printf "pseudo pack order | index | pack id | pack offset\n";
+        for pseudo_pack_order = 0 to object_count - 1 do
+          let index =
+            Multi_pack_reverse_index_reader.index_of_pseudo_pack_order
+              reverse_index
+              ~pseudo_pack_order
+          in
+          let pack_id =
+            Multi_pack_reverse_index_reader.pack_id_of_pseudo_pack_order
+              reverse_index
+              ~pseudo_pack_order
+          in
+          let pack_offset =
+            Multi_pack_reverse_index_reader.pack_offset_of_pseudo_pack_order
+              reverse_index
+              ~pseudo_pack_order
+          in
+          let pseudo_pack_order_index_round_trip =
+            Multi_pack_reverse_index_reader.pseudo_pack_order_of_index
+              reverse_index
+              ~index
+          in
+          let pseudo_pack_order_offset_round_trip =
+            Multi_pack_reverse_index_reader.pseudo_pack_order_of_pack_id_and_offset
+              reverse_index
+              ~pack_id
+              ~pack_offset
+          in
+          let index_offset_round_trip =
+            Multi_pack_reverse_index_reader.index_of_pack_id_and_offset
+              reverse_index
+              ~pack_id
+              ~pack_offset
+          in
+          printf
+            "%11d %2d %2d | %2d %2d | %7d | %11d \n"
+            pseudo_pack_order
+            pseudo_pack_order_index_round_trip
+            pseudo_pack_order_offset_round_trip
+            index
+            index_offset_round_trip
+            pack_id
+            pack_offset
+        done
     ;;
 
     let%expect_test "" =
@@ -164,12 +213,74 @@ let%test_module "Multi_pack_reverse_index_writer" =
           print_endline "packs by mtime order:";
           Array.iter packs ~f:print_endline;
           print_endline "";
+          let%bind () =
+            write_multi_pack_reverse_index
+              ~pack_directory
+              ~preferred_pack:None
+              `Parsed
+          in
+          let%bind () =
+            Deferred.Array.iter packs ~f:(fun preferred_pack ->
+              print_endline "";
+              write_multi_pack_reverse_index
+                ~pack_directory
+                ~preferred_pack:(Some preferred_pack)
+                `Parsed)
+          in
           [%expect
             {|
             packs by mtime order:
             pack-dfa729d1b4f4f638dcf554f804d034fe3a60b495.pack
             pack-bb8f3b6cbb5b4bd45f33bded1ffd1c249f573c3a.pack
-            pack-68d020a4f35b82da5646c7cee22bcf25add57c2d.pack |}];
+            pack-68d020a4f35b82da5646c7cee22bcf25add57c2d.pack
+
+            pseudo pack order | index | pack id | pack offset
+                      0  0  0 |  5  5 |       2 |          12
+                      1  1  1 |  4  4 |       2 |          66
+                      2  2  2 |  9  9 |       0 |          12
+                      3  3  3 |  1  1 |       0 |          27
+                      4  4  4 |  2  2 |       0 |          48
+                      5  5  5 |  7  7 |       0 |          69
+                      6  6  6 |  6  6 |       1 |          12
+                      7  7  7 |  0  0 |       1 |          27
+                      8  8  8 |  8  8 |       1 |          66
+                      9  9  9 |  3  3 |       1 |         110
+
+            pseudo pack order | index | pack id | pack offset
+                      0  0  0 |  5  5 |       2 |          12
+                      1  1  1 |  4  4 |       2 |          66
+                      2  2  2 |  9  9 |       0 |          12
+                      3  3  3 |  1  1 |       0 |          27
+                      4  4  4 |  2  2 |       0 |          48
+                      5  5  5 |  7  7 |       0 |          69
+                      6  6  6 |  6  6 |       1 |          12
+                      7  7  7 |  0  0 |       1 |          27
+                      8  8  8 |  8  8 |       1 |          66
+                      9  9  9 |  3  3 |       1 |         110
+
+            pseudo pack order | index | pack id | pack offset
+                      0  0  0 |  6  6 |       1 |          12
+                      1  1  1 |  0  0 |       1 |          27
+                      2  2  2 |  8  8 |       1 |          66
+                      3  3  3 |  3  3 |       1 |         110
+                      4  4  4 |  9  9 |       0 |          12
+                      5  5  5 |  1  1 |       0 |          27
+                      6  6  6 |  2  2 |       0 |          48
+                      7  7  7 |  7  7 |       0 |          69
+                      8  8  8 |  5  5 |       2 |          12
+                      9  9  9 |  4  4 |       2 |          66
+
+            pseudo pack order | index | pack id | pack offset
+                      0  0  0 |  9  9 |       0 |          12
+                      1  1  1 |  1  1 |       0 |          27
+                      2  2  2 |  2  2 |       0 |          48
+                      3  3  3 |  7  7 |       0 |          69
+                      4  4  4 |  6  6 |       1 |          12
+                      5  5  5 |  0  0 |       1 |          27
+                      6  6  6 |  8  8 |       1 |          66
+                      7  7  7 |  3  3 |       1 |         110
+                      8  8  8 |  5  5 |       2 |          12
+                      9  9  9 |  4  4 |       2 |          66 |}];
           let%bind () =
             write_multi_pack_reverse_index
               ~pack_directory
