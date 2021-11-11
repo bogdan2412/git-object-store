@@ -51,6 +51,29 @@ let read_object_file file =
       Git.Object_reader.read_file git_object_reader ~file sha1)
 ;;
 
+let read_multi_pack_index ~object_directory =
+  let open Deferred.Or_error.Let_syntax in
+  let module Reader = Git.Object_store.Low_level.Multi_pack_index_reader in
+  let pack_directory = object_directory ^/ "pack" in
+  let%map t = Reader.open_existing ~pack_directory in
+  let object_count = Reader.object_count t in
+  let pack_file_names = Reader.pack_file_names t in
+  printf "items in index: %d\n" object_count;
+  print_endline "packs in index:";
+  Array.iter pack_file_names ~f:print_endline;
+  print_endline "";
+  printf "    idx | %40s | %50s | pack offset\n" "sha1" "pack file";
+  for index = 0 to object_count - 1 do
+    let sha1 = Reader.sha1 t ~index in
+    printf
+      !"%7d | %{Sha1.Hex} | %49s | %11d\n"
+      (Git_pack_files.Find_result.Volatile.index_exn (Reader.find_sha1_index' t sha1))
+      (Sha1.Raw.Volatile.to_hex sha1)
+      pack_file_names.(Reader.pack_id t ~index)
+      (Reader.pack_offset t ~index)
+  done
+;;
+
 let read_pack_file ~print_contents pack_file =
   let open Deferred.Or_error.Let_syntax in
   let%map t = Git.Pack_reader.create ~pack_file Validate_sha1 in
@@ -316,6 +339,14 @@ let read_pack_file_command =
       fun () -> read_pack_file ~print_contents file]
 ;;
 
+let read_multi_pack_index_command =
+  Command.async_or_error
+    ~summary:"print git multi pack index file"
+    [%map_open.Command
+      let object_directory = Git.Util.object_directory_param in
+      fun () -> read_multi_pack_index ~object_directory]
+;;
+
 let write_pack_index_command =
   Command.async_or_error
     ~summary:"generate index for git pack file"
@@ -412,6 +443,7 @@ let command =
     ~summary:"git object store"
     [ "read-object-file", read_object_file_command
     ; "read-pack-file", read_pack_file_command
+    ; "read-multi-pack-index", read_multi_pack_index_command
     ; "write-pack-index", write_pack_index_command
     ; "write-pack-reverse-index", write_pack_reverse_index_command
     ; "write-multi-pack-index", write_multi_pack_index_command
