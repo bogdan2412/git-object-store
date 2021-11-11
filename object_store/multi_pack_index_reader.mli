@@ -46,6 +46,12 @@ val find_sha1_index : t -> Sha1.Raw.t -> Git_pack_files.Find_result.Volatile.t
 (** Search for an object with the given SHA1 hash in the multi pack index. *)
 val find_sha1_index' : t -> Sha1.Raw.Volatile.t -> Git_pack_files.Find_result.Volatile.t
 
+(** Returns the index's SHA1. *)
+val multi_pack_index_sha1 : t -> Sha1.Raw.Volatile.t
+
+(** Returns the path to the underlying multi pack index file. *)
+val multi_pack_index_file : t -> string
+
 module For_testing : sig
   val print_out_multi_pack_index : pack_directory:string -> unit Deferred.t
 end

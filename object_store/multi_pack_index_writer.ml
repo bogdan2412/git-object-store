@@ -358,32 +358,10 @@ let write_index_file ~pack_directory ~pack_file_names ~objects large_offsets =
 
 let write_multi_pack_index_file ~pack_directory ~preferred_pack =
   let%bind packs_with_mtimes = open_all_packs ~pack_directory >>| ok_exn in
+  let preferred_pack = Util.validate_preferred_pack ~pack_directory ~preferred_pack in
   let preferred_index =
     Option.map preferred_pack ~f:(fun preferred_pack ->
-      let preferred_pack =
-        match Filename.is_posix_pathname_component preferred_pack with
-        | true -> pack_directory ^/ preferred_pack
-        | false -> preferred_pack
-      in
-      (match
-         String.( = )
-           (Filename_unix.realpath pack_directory)
-           (Filename_unix.realpath (Filename.dirname preferred_pack))
-       with
-       | false ->
-         raise_s
-           [%message
-             "Preferred pack file not within pack directory"
-               (pack_directory : string)
-               (preferred_pack : string)]
-       | true -> ());
-      match String.chop_suffix ~suffix:".pack" preferred_pack with
-      | None ->
-        raise_s
-          [%message
-            "Expected preferred pack file to end with .pack extension"
-              (preferred_pack : string)]
-      | Some base -> Filename.basename (base ^ ".idx"))
+      Filename.basename (String.chop_suffix_exn ~suffix:".pack" preferred_pack ^ ".idx"))
   in
   let packs_in_lexicographic_order = Array.map ~f:fst packs_with_mtimes in
   Array.sort
@@ -444,59 +422,75 @@ let write_multi_pack_index_file ~pack_directory ~preferred_pack =
      | true -> `Large_offsets uint64_offsets)
 ;;
 
+module For_testing = struct
+  module Pack_writer = Git_pack_files.Writer
+
+  let make_pack_files ~object_directory packs =
+    let blob_writer =
+      Object_writer.Blob.Known_size.create_uninitialised ~object_directory
+    in
+    let pack_directory = object_directory ^/ "pack" in
+    let%bind () = Unix.mkdir pack_directory in
+    Deferred.List.mapi packs ~f:(fun idx pack ->
+      let%bind pack_writer =
+        Pack_writer.create ~pack_directory Validate_sha1 >>| ok_exn
+      in
+      let%bind () =
+        Deferred.List.iter pack ~f:(fun blob ->
+          let%bind () =
+            Object_writer.Blob.Known_size.init_or_reset
+              blob_writer
+              ~length:(String.length blob)
+              ~dry_run:false
+          in
+          Object_writer.Blob.Known_size.append_data
+            blob_writer
+            (Bigstring.of_string blob)
+            ~pos:0
+            ~len:(String.length blob);
+          let%bind sha1 = Object_writer.Blob.Known_size.finalise_exn blob_writer in
+          let sha1 = Sha1.Raw.to_hex sha1 in
+          let object_file =
+            let sha1_string = Sha1.Hex.to_string sha1 in
+            object_directory
+            ^/ String.sub sha1_string ~pos:0 ~len:2
+            ^/ String.sub sha1_string ~pos:2 ~len:(Sha1.Hex.length - 2)
+          in
+          Pack_writer.add_object_exn pack_writer ~object_file sha1)
+      in
+      let%bind pack_file = Pack_writer.finalise_exn pack_writer in
+      let%bind () =
+        let time =
+          Time.of_date_ofday
+            ~zone:Time.Zone.utc
+            (Date.create_exn ~y:1990 ~m:Dec ~d:24)
+            (Time.Ofday.create ~min:idx ())
+          |> Time.to_span_since_epoch
+          |> Time.Span.to_sec
+        in
+        Unix.utimes pack_file ~access:time ~modif:time
+      in
+      let%map () = Pack_reader.write_pack_index ~pack_file >>| ok_exn in
+      Filename.basename pack_file)
+  ;;
+
+  let three_overlapping_packs_example =
+    [ [ "just 0"; "both 0 and 1"; "both 0 and 2"; "all three" ]
+    ; [ "just 1"; "both 0 and 1"; "all three"; "another just 1"; "both 1 and 2" ]
+    ; [ "just 2"
+      ; "both 1 and 2"
+      ; "all three"
+      ; "another just 2"
+      ; "both 0 and 2"
+      ; "yet another just 2"
+      ]
+    ]
+  ;;
+end
+
 let%test_module "Multi_pack_index_writer_tests" =
   (module struct
     module Expect_test_time_zone = Git_core_types.Expect_test_time_zone
-    module Pack_writer = Git_pack_files.Writer
-
-    let make_pack_files ~object_directory packs =
-      let blob_writer =
-        Object_writer.Blob.Known_size.create_uninitialised ~object_directory
-      in
-      let pack_directory = object_directory ^/ "pack" in
-      let%bind () = Unix.mkdir pack_directory in
-      Deferred.List.mapi packs ~f:(fun idx pack ->
-        let%bind pack_writer =
-          Pack_writer.create ~pack_directory Validate_sha1 >>| ok_exn
-        in
-        let%bind () =
-          Deferred.List.iter pack ~f:(fun blob ->
-            let%bind () =
-              Object_writer.Blob.Known_size.init_or_reset
-                blob_writer
-                ~length:(String.length blob)
-                ~dry_run:false
-            in
-            Object_writer.Blob.Known_size.append_data
-              blob_writer
-              (Bigstring.of_string blob)
-              ~pos:0
-              ~len:(String.length blob);
-            let%bind sha1 = Object_writer.Blob.Known_size.finalise_exn blob_writer in
-            let sha1 = Sha1.Raw.to_hex sha1 in
-            let object_file =
-              let sha1_string = Sha1.Hex.to_string sha1 in
-              object_directory
-              ^/ String.sub sha1_string ~pos:0 ~len:2
-              ^/ String.sub sha1_string ~pos:2 ~len:(Sha1.Hex.length - 2)
-            in
-            Pack_writer.add_object_exn pack_writer ~object_file sha1)
-        in
-        let%bind pack_file = Pack_writer.finalise_exn pack_writer in
-        let%bind () =
-          let time =
-            Time.of_date_ofday
-              ~zone:Time.Zone.utc
-              (Date.create_exn ~y:1990 ~m:Dec ~d:24)
-              (Time.Ofday.create ~min:idx ())
-            |> Time.to_span_since_epoch
-            |> Time.Span.to_sec
-          in
-          Unix.utimes pack_file ~access:time ~modif:time
-        in
-        let%map () = Pack_reader.write_pack_index ~pack_file >>| ok_exn in
-        Filename.basename pack_file)
-    ;;
 
     let write_multi_pack_index_file ~pack_directory ~preferred_pack print =
       let index_file = pack_directory ^/ "multi-pack-index" in
@@ -520,23 +514,9 @@ let%test_module "Multi_pack_index_writer_tests" =
         Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
           let pack_directory = object_directory ^/ "pack" in
           let%bind packs =
-            make_pack_files
+            For_testing.make_pack_files
               ~object_directory
-              [ [ "just 0"; "both 0 and 1"; "both 0 and 2"; "all three" ]
-              ; [ "just 1"
-                ; "both 0 and 1"
-                ; "all three"
-                ; "another just 1"
-                ; "both 1 and 2"
-                ]
-              ; [ "just 2"
-                ; "both 1 and 2"
-                ; "all three"
-                ; "another just 2"
-                ; "both 0 and 2"
-                ; "yet another just 2"
-                ]
-              ]
+              For_testing.three_overlapping_packs_example
           in
           let packs = Array.of_list packs in
           print_endline "packs by mtime order:";

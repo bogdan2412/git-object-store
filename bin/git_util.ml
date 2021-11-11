@@ -137,6 +137,10 @@ let write_multi_pack_index ~object_directory ~preferred_pack =
   Git.Object_store.write_multi_pack_index ~object_directory ~preferred_pack
 ;;
 
+let write_multi_pack_reverse_index ~object_directory ~preferred_pack =
+  Git.Object_store.write_multi_pack_reverse_index ~object_directory ~preferred_pack
+;;
+
 let read_sha1_from_store ~object_directory sha1 =
   let open Deferred.Or_error.Let_syntax in
   let%bind git_object_store =
@@ -379,6 +383,22 @@ let write_multi_pack_index_command =
       fun () -> write_multi_pack_index ~object_directory ~preferred_pack]
 ;;
 
+let write_multi_pack_reverse_index_command =
+  Command.async_or_error
+    ~summary:"generate reverse index for an existing multi-pack-index file pseudo-pack"
+    [%map_open.Command
+      let object_directory = Git.Util.object_directory_param
+      and preferred_pack =
+        flag
+          "-preferred-pack"
+          (optional Filename_unix.arg_type)
+          ~doc:
+            "FILE specify the tie-breaking pack used when multiple packs contain the \
+             same object."
+      in
+      fun () -> write_multi_pack_reverse_index ~object_directory ~preferred_pack]
+;;
+
 let read_sha1_from_store_command =
   Command.async_or_error
     ~summary:
@@ -447,6 +467,7 @@ let command =
     ; "write-pack-index", write_pack_index_command
     ; "write-pack-reverse-index", write_pack_reverse_index_command
     ; "write-multi-pack-index", write_multi_pack_index_command
+    ; "write-multi-pack-reverse-index", write_multi_pack_reverse_index_command
     ; "read-sha1-from-store", read_sha1_from_store_command
     ; "write-commit-from-file", write_commit_from_file_command
     ; "write-tree-from-file", write_tree_from_file_command

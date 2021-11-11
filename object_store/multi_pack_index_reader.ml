@@ -387,6 +387,20 @@ let find_sha1_index' t sha1 =
   Find_sha1_index'.find_sha1_index t (Sha1.Raw.Volatile.bytes sha1)
 ;;
 
+let multi_pack_index_sha1 =
+  let result = Sha1.Raw.Volatile.create () in
+  fun t ->
+    Bigstring.To_bytes.blit
+      ~src:t.file_mmap
+      ~src_pos:(t.file_size - Sha1.Raw.length)
+      ~dst:(Sha1.Raw.Volatile.bytes result)
+      ~dst_pos:0
+      ~len:Sha1.Raw.length;
+    result
+;;
+
+let multi_pack_index_file t = t.index_file
+
 module For_testing = struct
   let print_out_multi_pack_index ~pack_directory =
     let%bind t = open_existing ~pack_directory >>| ok_exn in

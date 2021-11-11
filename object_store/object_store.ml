@@ -141,6 +141,17 @@ let write_multi_pack_index ~object_directory ~preferred_pack =
     Multi_pack_index_writer.write_multi_pack_index_file ~pack_directory ~preferred_pack)
 ;;
 
+let write_multi_pack_reverse_index ~object_directory ~preferred_pack =
+  let pack_directory = object_directory ^/ "pack" in
+  let%bind.Deferred.Or_error multi_pack_index =
+    Multi_pack_index_reader.open_existing ~pack_directory
+  in
+  Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
+    Multi_pack_reverse_index_writer.write_multi_pack_reverse_index
+      multi_pack_index
+      ~preferred_pack)
+;;
+
 let object_directory t = t.object_directory
 
 module Find_result : sig

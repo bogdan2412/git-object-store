@@ -43,6 +43,12 @@ val write_multi_pack_index
   -> preferred_pack:string option
   -> unit Or_error.t Deferred.t
 
+(** Create a reverse index for an existing [multi-pack-index] pseudo-pack. *)
+val write_multi_pack_reverse_index
+  :  object_directory:string
+  -> preferred_pack:string option
+  -> unit Or_error.t Deferred.t
+
 val object_directory : _ t -> string
 
 module Find_result : sig
