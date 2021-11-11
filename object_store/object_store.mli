@@ -50,9 +50,13 @@ module Find_result : sig
     (** Do not keep references to instances of this type as they will be mutated
         on every call to [find_object]. *)
     type 'Sha1_validation t = private
-      | In_pack_file of
+      | In_pack_file_at_index of
           { mutable pack : 'Sha1_validation Pack_reader.t
           ; mutable index : int
+          }
+      | In_pack_file_at_offset of
+          { mutable pack : 'Sha1_validation Pack_reader.t
+          ; mutable offset : int
           }
       | Unpacked_file_if_exists of { mutable path : string }
       (** [Unpacked_file_if_exists] does not verify that the path exists, it

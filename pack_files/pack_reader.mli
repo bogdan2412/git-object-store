@@ -96,6 +96,33 @@ val size : _ t -> index:int -> Size.Volatile.t
 
 module Low_level : sig
   val index : _ t -> Index_reader.t
+
+  (** Read and parse the object found in the pack at the provided offset.
+      Raises or produces garbage for an invalid value of [pack_offset]. *)
+  val read_object
+    :  'Sha1_validation t
+    -> pack_offset:int
+    -> on_blob_size:(int -> unit)
+    -> on_blob_chunk:(Bigstring.t -> pos:int -> len:int -> unit)
+    -> on_commit:(Commit.t -> unit)
+    -> on_tree_line:(File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit)
+    -> on_tag:(Tag.t -> unit)
+    -> 'Sha1_validation
+    -> unit
+
+  (** Read and parse the object found in the pack at the provided offset.
+      Raises or produces garbage for an invalid value of [pack_offset]. *)
+  val read_raw_object
+    :  'Sha1_validation t
+    -> pack_offset:int
+    -> on_header:(Object_type.t -> size:int -> unit)
+    -> on_payload:(Bigstring.t -> pos:int -> len:int -> unit)
+    -> 'Sha1_validation
+    -> unit
+
+  (** Returns the size of the object found in the pack at the provided offset.
+      Raises or produces garbage for an invalid value of [pack_offset]. *)
+  val size : _ t -> pack_offset:int -> Size.Volatile.t
 end
 
 module For_testing : sig

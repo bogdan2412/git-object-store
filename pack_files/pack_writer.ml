@@ -141,6 +141,38 @@ let add_object_from_pack_exn t pack_reader ~index =
     ok_exn (Or_error.combine_errors_unit [ error; abort_result ])
 ;;
 
+module Low_level = struct
+  let add_object_from_pack_exn
+        (t : 'Sha1_validation t)
+        (pack_reader : 'Sha1_validation Pack_reader.t)
+        ~pack_offset
+        (sha1_validation : 'Sha1_validation)
+    =
+    t.items_in_pack <- t.items_in_pack + 1;
+    Zlib.Deflate.init_or_reset t.pack_object_zlib_deflate;
+    Pack_reader.Low_level.read_raw_object
+      pack_reader
+      ~pack_offset
+      ~on_header:t.add_object_on_header
+      ~on_payload:t.add_object_on_payload
+      sha1_validation;
+    Zlib.Deflate.finalise t.pack_object_zlib_deflate
+  ;;
+
+  let add_object_from_pack_exn t pack_reader ~pack_offset sha1_validation =
+    if Writer.is_closed t.writer
+    then failwith "[Low_level.add_object_from_pack_exn] called on aborted pack writer";
+    match
+      Or_error.try_with (fun () ->
+        add_object_from_pack_exn t pack_reader ~pack_offset sha1_validation)
+    with
+    | Ok () -> Deferred.unit
+    | Error _ as error ->
+      let%map abort_result = abort t in
+      ok_exn (Or_error.combine_errors_unit [ error; abort_result ])
+  ;;
+end
+
 let finalise_exn t =
   let%bind () = Writer.close t.writer in
   let%bind () =

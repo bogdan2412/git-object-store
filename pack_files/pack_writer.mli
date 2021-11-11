@@ -51,6 +51,17 @@ val add_object_from_pack_exn
   -> index:int
   -> unit Deferred.t
 
+module Low_level : sig
+  (** Adds git object file from an existing pack to the new pack file.
+      Exceptions will abort writing of the entire pack file. *)
+  val add_object_from_pack_exn
+    :  'Sha1_validation t
+    -> 'Sha1_validation Pack_reader.t
+    -> pack_offset:int
+    -> 'Sha1_validation
+    -> unit Deferred.t
+end
+
 (** Finalises the pack file and returns the path to the newly created file.
     Exceptions will abort writing of the entire pack file. *)
 val finalise_exn : _ t -> string Deferred.t

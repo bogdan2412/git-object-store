@@ -217,9 +217,8 @@ module Read_raw_object_function = struct
   let sha1_context = Sha1.Compute.create_uninitialised ()
   let buf = Bigstring.create 32
 
-  let impl (type a) (t : a t) ~index ~on_header ~on_payload =
-    let pos = pack_file_object_offset t ~index in
-    let (T delta_object_parser) = read_raw_delta_object t ~pos in
+  let impl (type a) (t : a t) ~pack_offset ~on_header ~on_payload (sha1_validation : a) =
+    let (T delta_object_parser) = read_raw_delta_object t ~pos:pack_offset in
     let object_type = Delta_object_parser.result_object_type delta_object_parser in
     let len = Delta_object_parser.result_len delta_object_parser in
     on_header object_type ~size:len;
@@ -241,17 +240,30 @@ module Read_raw_object_function = struct
       let actual_sha1 =
         Sha1.Hex.Volatile.non_volatile (Sha1.Compute.get_hex sha1_context)
       in
-      let expected_sha1 = Sha1.Raw.Volatile.to_hex (sha1 t ~index) in
-      if [%compare.equal: Sha1.Hex.t] actual_sha1 expected_sha1
+      if [%compare.equal: Sha1.Hex.t] actual_sha1 sha1_validation
       then ()
       else
         raise_s
           [%message
-            "Unexpected_sha1" (actual_sha1 : Sha1.Hex.t) (expected_sha1 : Sha1.Hex.t)]
+            "Unexpected_sha1"
+              (actual_sha1 : Sha1.Hex.t)
+              ~expected_sha1:(sha1_validation : Sha1.Hex.t)]
   ;;
 end
 
-let read_raw_object = Read_raw_object_function.impl
+let read_raw_object' = Read_raw_object_function.impl
+
+let read_raw_object (type a) (t : a t) ~index ~on_header ~on_payload =
+  let pack_offset = pack_file_object_offset t ~index in
+  read_raw_object'
+    t
+    ~pack_offset
+    ~on_header
+    ~on_payload
+    (match t.sha1_validation with
+     | Do_not_validate_sha1 -> ()
+     | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index))
+;;
 
 module Read_object_function = struct
   let feed_parser_data t pos =
@@ -268,19 +280,21 @@ module Read_object_function = struct
   let impl
         (type a)
         (t : a t)
-        ~index
+        ~pack_offset
         ~on_blob_size
         ~on_blob_chunk
         ~on_commit
         ~on_tree_line
         ~on_tag
+        sha1_validation
     =
-    let pos = pack_file_object_offset t ~index in
-    let payload_length = Low_level_reader.object_length t.pack_file_mmap ~pos in
-    let data_start_pos =
-      Low_level_reader.skip_variable_length_integer t.pack_file_mmap ~pos
+    let payload_length =
+      Low_level_reader.object_length t.pack_file_mmap ~pos:pack_offset
     in
-    match Low_level_reader.object_type t.pack_file_mmap ~pos with
+    let data_start_pos =
+      Low_level_reader.skip_variable_length_integer t.pack_file_mmap ~pos:pack_offset
+    in
+    match Low_level_reader.object_type t.pack_file_mmap ~pos:pack_offset with
     | T ((Commit | Tree | Blob | Tag) as object_type) ->
       Base_object_parser.reset_for_reading
         t.base_object_parser
@@ -291,12 +305,10 @@ module Read_object_function = struct
         ~on_commit
         ~on_tree_line
         ~on_tag
-        (match t.sha1_validation with
-         | Do_not_validate_sha1 -> ()
-         | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index));
+        sha1_validation;
       feed_parser_data t data_start_pos
     | T (Ofs_delta | Ref_delta) ->
-      let (T delta_object_parser) = read_raw_delta_object t ~pos in
+      let (T delta_object_parser) = read_raw_delta_object t ~pos:pack_offset in
       Delta_object_parser.parse_result
         delta_object_parser
         ~on_blob_size
@@ -304,13 +316,35 @@ module Read_object_function = struct
         ~on_commit
         ~on_tree_line
         ~on_tag
-        (match t.sha1_validation with
-         | Do_not_validate_sha1 -> ()
-         | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index))
+        sha1_validation
   ;;
 end
 
-let read_object = Read_object_function.impl
+let read_object' = Read_object_function.impl
+
+let read_object
+      (type a)
+      (t : a t)
+      ~index
+      ~on_blob_size
+      ~on_blob_chunk
+      ~on_commit
+      ~on_tree_line
+      ~on_tag
+  =
+  let pack_offset = pack_file_object_offset t ~index in
+  read_object'
+    t
+    ~pack_offset
+    ~on_blob_size
+    ~on_blob_chunk
+    ~on_commit
+    ~on_tree_line
+    ~on_tag
+    (match t.sha1_validation with
+     | Do_not_validate_sha1 -> ()
+     | Validate_sha1 -> Sha1.Raw.Volatile.to_hex (sha1 t ~index))
+;;
 
 module Size = struct
   module Volatile = struct
@@ -329,11 +363,12 @@ module Size = struct
     ;;
   end
 
-  let impl t ~index =
-    let pos = pack_file_object_offset t ~index in
-    let (T pack_object_type) = Low_level_reader.object_type t.pack_file_mmap ~pos in
+  let impl t ~pack_offset =
+    let (T pack_object_type) =
+      Low_level_reader.object_type t.pack_file_mmap ~pos:pack_offset
+    in
     let data_start_pos =
-      Low_level_reader.skip_variable_length_integer t.pack_file_mmap ~pos
+      Low_level_reader.skip_variable_length_integer t.pack_file_mmap ~pos:pack_offset
     in
     let data_start_pos =
       match pack_object_type with
@@ -342,7 +377,7 @@ module Size = struct
         Low_level_reader.skip_variable_length_integer t.pack_file_mmap ~pos:data_start_pos
       | Ref_delta -> data_start_pos + Sha1.Raw.length
     in
-    let delta_size = Low_level_reader.object_length t.pack_file_mmap ~pos in
+    let delta_size = Low_level_reader.object_length t.pack_file_mmap ~pos:pack_offset in
     let delta_object_parser =
       Delta_object_parser.begin_zlib_inflate_into_result
         t.delta_object_parser
@@ -359,7 +394,7 @@ module Size = struct
     let delta_object_parser =
       Delta_object_parser.finalise_result_zlib_inflate_exn delta_object_parser
     in
-    let pack_size = data_start_pos + data_length - pos in
+    let pack_size = data_start_pos + data_length - pack_offset in
     let size =
       match pack_object_type with
       | Commit | Tree | Blob | Tag -> delta_size
@@ -379,10 +414,18 @@ module Size = struct
   ;;
 end
 
-let size = Size.impl
+let size' = Size.impl
+
+let size t ~index =
+  let pack_offset = pack_file_object_offset t ~index in
+  size' t ~pack_offset
+;;
 
 module Low_level = struct
   let index t = t.index
+  let read_object = read_object'
+  let read_raw_object = read_raw_object'
+  let size = size'
 end
 
 module For_testing = struct
