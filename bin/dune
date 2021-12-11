@@ -2,6 +2,6 @@
  (name git_util)
  (public_name git-util)
  (package git)
- (libraries async core_kernel.core core.command_unix git)
+ (libraries async core core_unix.command_unix git)
  (preprocess
   (pps ppx_jane)))
