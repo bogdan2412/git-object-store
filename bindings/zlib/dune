@@ -1,7 +1,7 @@
 (library
  (name git_bindings_zlib)
  (public_name git.bindings_zlib)
- (libraries core_kernel.core)
+ (libraries core)
  (foreign_stubs
   (language c)
   (names zlib_stubs))

@@ -1,9 +1,8 @@
 (library
  (name git_pack_files)
  (public_name git.pack_files)
- (libraries async core_kernel.core expect_test_helpers_async
-   git_bindings_crc32 git_bindings_sha1 git_bindings_zlib git_core_types
-   git_object_files)
+ (libraries async core expect_test_helpers_async git_bindings_crc32
+   git_bindings_sha1 git_bindings_zlib git_core_types git_object_files)
  (inline_tests)
  (preprocess
   (pps ppx_jane)))

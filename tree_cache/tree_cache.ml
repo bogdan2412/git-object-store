@@ -54,7 +54,6 @@ module Node0 = struct
         -> [ `Loaded ] state
 
   and packed_state = T : _ state -> packed_state
-
   and t = { mutable state : packed_state }
 
   let empty () =
