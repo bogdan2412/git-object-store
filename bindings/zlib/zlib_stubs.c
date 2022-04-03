@@ -1,6 +1,6 @@
 /* zlib bindings for OCaml.
 
-   Copyright (C) 2019-2021  Bogdan-Cristian Tataroiu
+   Copyright (C) 2019-2022  Bogdan-Cristian Tataroiu
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -27,7 +27,11 @@
 
 #include <zlib.h>
 
-enum state { NOT_INITIALISED = 0, INITIALISED_INFLATE = 1, INITIALISED_DEFLATE = 2 };
+enum state {
+  NOT_INITIALISED = 0,
+  INITIALISED_INFLATE = 1,
+  INITIALISED_DEFLATE = 2
+};
 
 struct wrap_stream {
   z_stream *z_stream;
@@ -37,7 +41,7 @@ struct wrap_stream {
 #define Zstream_val(v) (((struct wrap_stream *)(Data_custom_val(v)))->z_stream)
 #define State(v) (((struct wrap_stream *)(Data_custom_val(v)))->state)
 
-static value * zlib_error_exn = NULL;
+static value *zlib_error_exn = NULL;
 
 static void git_zlib_error(char *fn, value zstream, int ret_code) {
   if (ret_code == Z_OK) {
@@ -107,15 +111,13 @@ static void git_zlib_free_zstream_internal(value wrap_stream) {
     break;
   case INITIALISED_INFLATE:
     ret_code = inflateEnd(zstream);
-    git_zlib_error("git_zlib_free_zstream_internal",
-                   wrap_stream,
+    git_zlib_error("git_zlib_free_zstream_internal", wrap_stream,
                    ret_code == Z_DATA_ERROR ? 0 : ret_code);
     State(wrap_stream) = NOT_INITIALISED;
     break;
   case INITIALISED_DEFLATE:
     ret_code = deflateEnd(zstream);
-    git_zlib_error("git_zlib_free_zstream_internal",
-                   wrap_stream,
+    git_zlib_error("git_zlib_free_zstream_internal", wrap_stream,
                    ret_code == Z_DATA_ERROR ? 0 : ret_code);
     State(wrap_stream) = NOT_INITIALISED;
     break;
@@ -131,10 +133,9 @@ static void git_zlib_free(value zstream) {
 
 value git_zlib_create_uninitialised_zstream(void) {
   value ret;
-  ret = caml_alloc_final((sizeof(struct wrap_stream) + sizeof(value) - 1) / sizeof(value),
-                         git_zlib_free,
-                         1 << MAX_WBITS,
-                         1 << 20);
+  ret = caml_alloc_final((sizeof(struct wrap_stream) + sizeof(value) - 1) /
+                             sizeof(value),
+                         git_zlib_free, 1 << MAX_WBITS, 1 << 20);
   Zstream_val(ret) = caml_stat_alloc(sizeof(z_stream));
   State(ret) = NOT_INITIALISED;
   return ret;
@@ -154,10 +155,9 @@ value git_zlib_inflate_reset(value zstream) {
   return Val_unit;
 }
 
-value git_zlib_inflate_process(value zstream,
-                               value src, value src_pos, value src_len,
-                               value dst, value dst_pos, value dst_len,
-                               value finish) {
+value git_zlib_inflate_process(value zstream, value src, value src_pos,
+                               value src_len, value dst, value dst_pos,
+                               value dst_len, value finish) {
   z_stream *zs = Zstream_val(zstream);
   int ret_code;
 
@@ -168,9 +168,7 @@ value git_zlib_inflate_process(value zstream,
   caml_release_runtime_system();
   ret_code = inflate(zs, Bool_val(finish) ? Z_FINISH : Z_NO_FLUSH);
   caml_acquire_runtime_system();
-  if (ret_code == Z_OK ||
-      ret_code == Z_BUF_ERROR ||
-      ret_code == Z_STREAM_END) {
+  if (ret_code == Z_OK || ret_code == Z_BUF_ERROR || ret_code == Z_STREAM_END) {
     return Val_bool(ret_code == Z_STREAM_END);
   } else {
     git_zlib_error("Zlib.Inflate.process", zstream, ret_code);
@@ -178,8 +176,8 @@ value git_zlib_inflate_process(value zstream,
 }
 
 value git_zlib_inflate_process_bytecode(value *arg, int nargs) {
-  return git_zlib_inflate_process(arg[0], arg[1], arg[2], arg[3],
-                                  arg[4], arg[5], arg[6], arg[7]);
+  return git_zlib_inflate_process(arg[0], arg[1], arg[2], arg[3], arg[4],
+                                  arg[5], arg[6], arg[7]);
 }
 
 value git_zlib_deflate_init(value zstream) {
@@ -196,10 +194,9 @@ value git_zlib_deflate_reset(value zstream) {
   return Val_unit;
 }
 
-value git_zlib_deflate_process(value zstream,
-                               value src, value src_pos, value src_len,
-                               value dst, value dst_pos, value dst_len,
-                               value finish) {
+value git_zlib_deflate_process(value zstream, value src, value src_pos,
+                               value src_len, value dst, value dst_pos,
+                               value dst_len, value finish) {
   z_stream *zs = Zstream_val(zstream);
   int ret_code;
 
@@ -210,9 +207,7 @@ value git_zlib_deflate_process(value zstream,
   caml_release_runtime_system();
   ret_code = deflate(zs, Bool_val(finish) ? Z_FINISH : Z_NO_FLUSH);
   caml_acquire_runtime_system();
-  if (ret_code == Z_OK ||
-      ret_code == Z_BUF_ERROR ||
-      ret_code == Z_STREAM_END) {
+  if (ret_code == Z_OK || ret_code == Z_BUF_ERROR || ret_code == Z_STREAM_END) {
     return Val_bool(ret_code == Z_STREAM_END);
   } else {
     git_zlib_error("Zlib.Deflate.process", zstream, ret_code);
@@ -220,6 +215,6 @@ value git_zlib_deflate_process(value zstream,
 }
 
 value git_zlib_deflate_process_bytecode(value *arg, int nargs) {
-  return git_zlib_deflate_process(arg[0], arg[1], arg[2], arg[3],
-                                  arg[4], arg[5], arg[6], arg[7]);
+  return git_zlib_deflate_process(arg[0], arg[1], arg[2], arg[3], arg[4],
+                                  arg[5], arg[6], arg[7]);
 }
