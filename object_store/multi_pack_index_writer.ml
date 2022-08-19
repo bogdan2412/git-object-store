@@ -461,12 +461,12 @@ module For_testing = struct
       let%bind pack_file = Pack_writer.finalise_exn pack_writer in
       let%bind () =
         let time =
-          Time.of_date_ofday
-            ~zone:Time.Zone.utc
+          Time_ns.of_date_ofday
+            ~zone:Time_ns_unix.Zone.utc
             (Date.create_exn ~y:1990 ~m:Dec ~d:24)
-            (Time.Ofday.create ~min:idx ())
-          |> Time.to_span_since_epoch
-          |> Time.Span.to_sec
+            (Time_ns.Ofday.create ~min:idx ())
+          |> Time_ns.to_span_since_epoch
+          |> Time_ns.Span.to_sec
         in
         Unix.utimes pack_file ~access:time ~modif:time
       in

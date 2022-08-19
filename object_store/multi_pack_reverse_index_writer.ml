@@ -54,7 +54,7 @@ let write_multi_pack_reverse_index index ~preferred_pack =
           let%map stat = Unix.lstat pack_file_path in
           stat.mtime, index)
       in
-      Array.sort packs_with_mtimes ~compare:(Comparable.lift ~f:fst Time.compare);
+      Array.sort packs_with_mtimes ~compare:(Comparable.lift ~f:fst Time_float.compare);
       snd packs_with_mtimes.(0)
   in
   let sha1 =

@@ -155,11 +155,7 @@ let stats t ~path sha1 kind perm =
       Tree_timestamps.last_change_time_exn tree_timestamps ~path ~current_sha1:sha1
     | None -> return t.commit_timestamp
   in
-  let time =
-    Time_ns.to_time_float_round_nearest time
-    |> Time.to_span_since_epoch
-    |> Time.Span.to_sec
-  in
+  let time = Time_ns.to_span_since_epoch time |> Time_ns.Span.to_sec in
   return
     { Core_unix.st_dev = 0
     ; st_ino = 0
