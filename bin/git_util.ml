@@ -184,8 +184,7 @@ let write_tree_from_file ~object_directory file ~dry_run =
       let fail ~exn =
         raise_s
           [%message
-            "Cannot parse line - expected [mode], [sha1] and [name] separated by \
-             spaces"
+            "Cannot parse line - expected [mode], [sha1] and [name] separated by spaces"
               (raw_line : string)
               (exn : Exn.t option)]
       in
@@ -269,9 +268,7 @@ let rec write_tree_from_directory' ~object_directory ~source_directory ~dry_run 
           in
           Git.Object_writer.Tree.write_tree_line
             tree_writer
-            (if stat.perm land 0o111 = 0
-             then Non_executable_file
-             else Executable_file)
+            (if stat.perm land 0o111 = 0 then Non_executable_file else Executable_file)
             sha1
             ~name:entry;
           Deferred.unit
@@ -291,24 +288,15 @@ let rec write_tree_from_directory' ~object_directory ~source_directory ~dry_run 
             (Bigstring.of_string link_path)
             ~pos:0
             ~len:(String.length link_path);
-          let%bind sha1 =
-            Git.Object_writer.Blob.Known_size.finalise_exn blob_writer
-          in
+          let%bind sha1 = Git.Object_writer.Blob.Known_size.finalise_exn blob_writer in
           Git.Object_writer.Tree.write_tree_line tree_writer Link sha1 ~name:entry;
           Deferred.unit
         | `Directory ->
           let%bind sha1 =
-            write_tree_from_directory'
-              ~object_directory
-              ~source_directory:path
-              ~dry_run
+            write_tree_from_directory' ~object_directory ~source_directory:path ~dry_run
             >>| ok_exn
           in
-          Git.Object_writer.Tree.write_tree_line
-            tree_writer
-            Directory
-            sha1
-            ~name:entry;
+          Git.Object_writer.Tree.write_tree_line tree_writer Directory sha1 ~name:entry;
           Deferred.unit)
     in
     Git.Object_writer.Tree.finalise tree_writer)

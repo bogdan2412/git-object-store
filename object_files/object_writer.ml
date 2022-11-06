@@ -560,12 +560,8 @@ let%expect_test "write commit" =
   Expect_test_helpers_async.with_temp_dir (fun object_directory ->
     Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
       let t = Commit.create ~object_directory in
-      let reader =
-        Object_reader.Expect_test_helpers.commit_reader Do_not_validate_sha1
-      in
-      let%bind sha1 =
-        Commit.write t Commit_.For_testing.example_commit ~dry_run:false
-      in
+      let reader = Object_reader.Expect_test_helpers.commit_reader Do_not_validate_sha1 in
+      let%bind sha1 = Commit.write t Commit_.For_testing.example_commit ~dry_run:false in
       printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
       [%expect {| 3678df8b9ac798bf8a19b6477254b0ca24a20954 |}];
       let expected_file_path =
@@ -611,8 +607,7 @@ let%expect_test "write commit" =
       let%bind sha1 =
         Commit.write
           t
-          { Commit_.tree =
-              Sha1.Hex.of_string "b39daecaf9bc405deea72ff4dcbd5bb16613eb1f"
+          { Commit_.tree = Sha1.Hex.of_string "b39daecaf9bc405deea72ff4dcbd5bb16613eb1f"
           ; parents = []
           ; author =
               { name = "Bogdan-Cristian Tataroiu"
@@ -729,9 +724,7 @@ let%expect_test "write tag" =
   Expect_test_helpers_async.with_temp_dir (fun object_directory ->
     Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
       let t = Tag.create ~object_directory in
-      let reader =
-        Object_reader.Expect_test_helpers.tag_reader Do_not_validate_sha1
-      in
+      let reader = Object_reader.Expect_test_helpers.tag_reader Do_not_validate_sha1 in
       let%bind sha1 = Tag.write t Tag_.For_testing.example_tag ~dry_run:false in
       printf !"%{Sha1.Hex}" (Sha1.Raw.to_hex sha1);
       [%expect {| ac5f368017e73cac599c7dfd77bd36da2b816eaf |}];

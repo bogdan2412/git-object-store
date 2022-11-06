@@ -83,13 +83,9 @@ let init ~git_directory ~branch ~stat_accurate_timestamps ~max_concurrent_reads 
         | false -> return None
       in
       let tree_handles =
-        Handle_manager.create
-          ~initial_capacity:64
-          ~empty_value:(Tree_cache.Node.empty ())
+        Handle_manager.create ~initial_capacity:64 ~empty_value:(Tree_cache.Node.empty ())
       in
-      let blob_handles =
-        Handle_manager.create ~initial_capacity:128 ~empty_value:None
-      in
+      let blob_handles = Handle_manager.create ~initial_capacity:128 ~empty_value:None in
       return
         { commit_timestamp
         ; uid

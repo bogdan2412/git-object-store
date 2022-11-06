@@ -214,10 +214,7 @@ let%test_module "Multi_pack_reverse_index_writer" =
           Array.iter packs ~f:print_endline;
           print_endline "";
           let%bind () =
-            write_multi_pack_reverse_index
-              ~pack_directory
-              ~preferred_pack:None
-              `Parsed
+            write_multi_pack_reverse_index ~pack_directory ~preferred_pack:None `Parsed
           in
           let%bind () =
             Deferred.Array.iter packs ~f:(fun preferred_pack ->

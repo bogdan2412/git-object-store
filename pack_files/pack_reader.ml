@@ -44,11 +44,7 @@ let create ~pack_file sha1_validation =
     let open Deferred.Or_error.Let_syntax in
     let items_in_pack = Bigstring.get_uint32_be pack_file_mmap ~pos:8 in
     let%bind index =
-      Index_reader.open_existing
-        ~pack_file
-        ~pack_file_mmap
-        ~pack_file_size
-        ~items_in_pack
+      Index_reader.open_existing ~pack_file ~pack_file_mmap ~pack_file_size ~items_in_pack
     in
     let result =
       let open Or_error.Let_syntax in
@@ -100,11 +96,7 @@ let write_pack_reverse_index ~pack_file =
   Util.with_file pack_file ~f:(fun (_ : Fd.t) pack_file_size pack_file_mmap ->
     let items_in_pack = Bigstring.get_uint32_be pack_file_mmap ~pos:8 in
     let%bind.Deferred.Or_error index =
-      Index_reader.open_existing
-        ~pack_file
-        ~pack_file_mmap
-        ~pack_file_size
-        ~items_in_pack
+      Index_reader.open_existing ~pack_file ~pack_file_mmap ~pack_file_size ~items_in_pack
     in
     Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
       Reverse_index_writer.write_reverse_index index))

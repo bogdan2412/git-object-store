@@ -241,10 +241,7 @@ let%expect_test "file blob object" =
     in
     let%bind () =
       Expect_test_helpers_async.show_raise_async (fun () ->
-        read_file
-          t
-          ~file
-          (Sha1.Hex.of_string "0000000000000000000000000000000000000000"))
+        read_file t ~file (Sha1.Hex.of_string "0000000000000000000000000000000000000000"))
     in
     [%expect
       {|

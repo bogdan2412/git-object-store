@@ -240,10 +240,7 @@ let%expect_test "write simple pack" =
       let temp_file_name = pack_directory ^/ "file" in
       let add_object_exn t contents expected_sha1 =
         let%bind () = Writer.save temp_file_name ~contents in
-        add_object_exn
-          t
-          ~object_file:temp_file_name
-          (Sha1.Hex.of_string expected_sha1)
+        add_object_exn t ~object_file:temp_file_name (Sha1.Hex.of_string expected_sha1)
       in
       let%bind () =
         Expect_test_helpers_async.show_raise_async (fun () ->

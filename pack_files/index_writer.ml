@@ -340,10 +340,7 @@ let write_index_file ~index_file ~(objects_in_sha1_order : Object.t array) ~pack
   Array.iter objects_in_sha1_order ~f:(fun object_ ->
     let first_byte = (Sha1.Raw.to_string (Set_once.get_exn object_.sha1 [%here])).[0] in
     let pos = Index_offsets.fanout offsets first_byte in
-    Bigstring.set_uint32_be_exn
-      file_mmap
-      ~pos
-      (Bigstring.get_uint32_be file_mmap ~pos + 1));
+    Bigstring.set_uint32_be_exn file_mmap ~pos (Bigstring.get_uint32_be file_mmap ~pos + 1));
   for idx = 1 to 255 do
     let pos = Index_offsets.fanout offsets (Char.of_int_exn idx) in
     Bigstring.set_uint32_be_exn
@@ -407,8 +404,7 @@ let write_index ~pack_file ~pack_file_mmap ~items_in_pack =
   Queue.iter objects_in_pack_order ~f:(fun object_ ->
     match object_.delta_parent with
     | Some _ -> ()
-    | None ->
-      dfs delta_object_parser object_data_pool sha1_compute object_ pack_file_mmap);
+    | None -> dfs delta_object_parser object_data_pool sha1_compute object_ pack_file_mmap);
   let objects_in_sha1_order = Queue.to_array objects_in_pack_order in
   Array.sort
     objects_in_sha1_order

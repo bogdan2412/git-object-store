@@ -328,7 +328,9 @@ let find_object =
        | None -> loop_packs t sha1 t.additional_packs
        | Some { index = object_index } ->
          let pack_id = Multi_pack_index_reader.pack_id index ~index:object_index in
-         let pack_offset = Multi_pack_index_reader.pack_offset index ~index:object_index in
+         let pack_offset =
+           Multi_pack_index_reader.pack_offset index ~index:object_index
+         in
          let _, pack = packs.(pack_id) in
          Find_result.Volatile.in_pack_file_at_offset
            t.sha1_validation
@@ -349,10 +351,7 @@ let read_object_from_unpacked_file
       ~push_back
   =
   Throttle.enqueue t.read_throttle (fun (object_reader, _) ->
-    Object_reader.set_on_blob
-      object_reader
-      ~on_size:on_blob_size
-      ~on_chunk:on_blob_chunk;
+    Object_reader.set_on_blob object_reader ~on_size:on_blob_size ~on_chunk:on_blob_chunk;
     Object_reader.set_on_commit object_reader on_commit;
     Object_reader.set_on_tree_line object_reader on_tree_line;
     Object_reader.set_on_tag object_reader on_tag;

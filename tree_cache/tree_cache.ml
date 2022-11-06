@@ -177,11 +177,7 @@ module Node = struct
                   submodules := Map.add_exn !submodules ~key:name ~data:entry_sha1)
           in
           Loaded_and_persisted
-            { sha1
-            ; files = !files
-            ; directories = !directories
-            ; submodules = !submodules
-            })
+            { sha1; files = !files; directories = !directories; submodules = !submodules })
       in
       node.state <- T (Loading (sha1, loaded_deferred));
       upon loaded_deferred (fun loaded -> node.state <- T loaded);
@@ -307,8 +303,8 @@ module Node = struct
         in
         let new_directory_sha1 = sha1 new_node in
         (match old_directory_sha1, new_directory_sha1 with
-         | Some old_sha1, Some new_sha1 when [%compare.equal: Sha1.Hex.t] old_sha1 new_sha1
-           -> true
+         | Some old_sha1, Some new_sha1
+           when [%compare.equal: Sha1.Hex.t] old_sha1 new_sha1 -> true
          | _ -> false)
       | `File { File.sha1 = new_sha1; _ } ->
         (match Map.find (files state) name with
@@ -362,7 +358,8 @@ module Node = struct
          let state =
            Loaded_and_not_persisted
              { files = files state
-             ; directories = Map.set (directories state) ~key:directory ~data:new_directory
+             ; directories =
+                 Map.set (directories state) ~key:directory ~data:new_directory
              ; submodules = submodules state
              }
          in
