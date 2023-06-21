@@ -1,6 +1,6 @@
 (** Library for manipulating a git object store via OCaml.
 
-    Copyright (C) 2021-2022  Bogdan-Cristian Tataroiu
+    Copyright (C) 2021-2023  Bogdan-Cristian Tataroiu
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -109,10 +109,11 @@ module Object = struct
       ; crc32 : int
       ; sha1 : Sexp.t
       ; delta_parent =
-          (Option.map delta_parent ~f:(fun delta_parent -> delta_parent.pack_pos) : int
-                                                                                      option)
+          (Option.map delta_parent ~f:(fun delta_parent -> delta_parent.pack_pos)
+           : int option)
       ; delta_children =
-          (List.map delta_children ~f:(fun delta_child -> delta_child.pack_pos) : int list)
+          (List.map delta_children ~f:(fun delta_child -> delta_child.pack_pos)
+           : int list)
       ; contents : (Object_data.t option[@sexp.option])
       }]
   ;;

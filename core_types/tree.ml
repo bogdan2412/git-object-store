@@ -1,6 +1,6 @@
 (** Library for manipulating a git object store via OCaml.
 
-    Copyright (C) 2019-2022  Bogdan-Cristian Tataroiu
+    Copyright (C) 2019-2023  Bogdan-Cristian Tataroiu
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -242,8 +242,11 @@ module For_testing = struct
         consume
           ~pos:
             (pos
-             + Git_object_payload_parser.consume_payload_exn state buf ~pos ~len:(len - pos)
-            )
+             + Git_object_payload_parser.consume_payload_exn
+                 state
+                 buf
+                 ~pos
+                 ~len:(len - pos))
     in
     consume ~pos:0;
     printf !"%{sexp: (File_mode.t * Sha1.Hex.t * string) Queue.t}\n" lines;
