@@ -92,10 +92,11 @@ module Object = struct
       ; crc32 : int
       ; sha1 : Sexp.t
       ; delta_parent =
-          (Option.map delta_parent ~f:(fun delta_parent -> delta_parent.pack_pos) : int
-                                                                                      option)
+          (Option.map delta_parent ~f:(fun delta_parent -> delta_parent.pack_pos)
+           : int option)
       ; delta_children =
-          (List.map delta_children ~f:(fun delta_child -> delta_child.pack_pos) : int list)
+          (List.map delta_children ~f:(fun delta_child -> delta_child.pack_pos)
+           : int list)
       ; contents : (Object_data.t option[@sexp.option])
       }]
   ;;
