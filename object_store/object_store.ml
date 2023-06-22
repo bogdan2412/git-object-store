@@ -623,7 +623,7 @@ let all_unpacked_objects_in_store t =
   in
   let%bind () =
     let%bind first_level = Sys.readdir t.object_directory in
-    Deferred.Array.iter first_level ~f:(fun first_child ->
+    Deferred.Array.iter first_level ~how:`Sequential ~f:(fun first_child ->
       let path = Filename.concat t.object_directory first_child in
       if String.( = ) first_child "info" || String.( = ) first_child "pack"
       then Deferred.unit
@@ -631,7 +631,7 @@ let all_unpacked_objects_in_store t =
            && String.for_all ~f:is_hex first_child
       then (
         let%bind second_level = Sys.readdir path in
-        Deferred.Array.iter second_level ~f:(fun file ->
+        Deferred.Array.iter second_level ~how:`Sequential ~f:(fun file ->
           let path = Filename.concat path file in
           match%map Sys.is_file_exn path with
           | false -> Log.Global.info "Unexpected directory: %s" path

@@ -49,10 +49,13 @@ let write_multi_pack_reverse_index index ~preferred_pack =
          mtimes for objects that are not present in the preferred pack when breaking ties
          among multiple non-preferred packs) *)
       let%map packs_with_mtimes =
-        Deferred.Array.mapi pack_file_names ~f:(fun index pack_file_name ->
-          let pack_file_path = pack_directory ^/ pack_file_name in
-          let%map stat = Unix.lstat pack_file_path in
-          stat.mtime, index)
+        Deferred.Array.mapi
+          pack_file_names
+          ~how:`Sequential
+          ~f:(fun index pack_file_name ->
+            let pack_file_path = pack_directory ^/ pack_file_name in
+            let%map stat = Unix.lstat pack_file_path in
+            stat.mtime, index)
       in
       Array.sort packs_with_mtimes ~compare:(Comparable.lift ~f:fst Time_float.compare);
       snd packs_with_mtimes.(0)
@@ -121,7 +124,7 @@ let%test_module "Multi_pack_reverse_index_writer" =
           |> Array.filter ~f:(String.is_prefix ~prefix:"multi-pack-index-")
           |> Array.map ~f:(fun file_name -> pack_directory ^/ file_name)
         in
-        Deferred.Array.iter old_rev_indexes ~f:Unix.unlink
+        Deferred.Array.iter old_rev_indexes ~how:`Sequential ~f:Unix.unlink
       in
       let%bind multi_pack_index =
         Multi_pack_index_reader.open_existing ~pack_directory >>| ok_exn
@@ -217,7 +220,7 @@ let%test_module "Multi_pack_reverse_index_writer" =
             write_multi_pack_reverse_index ~pack_directory ~preferred_pack:None `Parsed
           in
           let%bind () =
-            Deferred.Array.iter packs ~f:(fun preferred_pack ->
+            Deferred.Array.iter packs ~how:`Sequential ~f:(fun preferred_pack ->
               print_endline "";
               write_multi_pack_reverse_index
                 ~pack_directory

@@ -97,7 +97,7 @@ struct
   let create_uninitialised ~on_data_chunk =
     { zstream = Zstream.create_uninitialised ()
     ; initialised = false
-    ; output = Bigstring.create (if Core.am_running_inline_test then 1 else 1 lsl 16)
+    ; output = Bigstring.create (if Core.am_running_test then 1 else 1 lsl 16)
     ; output_pos = 0
     ; on_data_chunk
     }

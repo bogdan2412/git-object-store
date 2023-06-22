@@ -428,12 +428,12 @@ module For_testing = struct
     in
     let pack_directory = object_directory ^/ "pack" in
     let%bind () = Unix.mkdir pack_directory in
-    Deferred.List.mapi packs ~f:(fun idx pack ->
+    Deferred.List.mapi packs ~how:`Sequential ~f:(fun idx pack ->
       let%bind pack_writer =
         Pack_writer.create ~pack_directory Validate_sha1 >>| ok_exn
       in
       let%bind () =
-        Deferred.List.iter pack ~f:(fun blob ->
+        Deferred.List.iter pack ~how:`Sequential ~f:(fun blob ->
           let%bind () =
             Object_writer.Blob.Known_size.init_or_reset
               blob_writer
@@ -523,7 +523,7 @@ let%test_module "Multi_pack_index_writer_tests" =
             write_multi_pack_index_file ~pack_directory ~preferred_pack:None `Parsed
           in
           let%bind () =
-            Deferred.Array.iter packs ~f:(fun preferred_pack ->
+            Deferred.Array.iter packs ~how:`Sequential ~f:(fun preferred_pack ->
               print_endline "";
               write_multi_pack_index_file
                 ~pack_directory

@@ -126,12 +126,11 @@ let create sha1_validation =
   in
   let rec t =
     lazy
-      { base_buf = Bigstring.create (if Core.am_running_inline_test then 1 else 1 lsl 15)
+      { base_buf = Bigstring.create (if Core.am_running_test then 1 else 1 lsl 15)
       ; base_len = 0
-      ; delta_buf = Bigstring.create (if Core.am_running_inline_test then 1 else 1 lsl 15)
+      ; delta_buf = Bigstring.create (if Core.am_running_test then 1 else 1 lsl 15)
       ; delta_len = 0
-      ; result_buf =
-          Bigstring.create (if Core.am_running_inline_test then 1 else 1 lsl 15)
+      ; result_buf = Bigstring.create (if Core.am_running_test then 1 else 1 lsl 15)
       ; result_len = 0
       ; result_object_type = Commit
       ; zlib_result_expected_length = 0

@@ -199,7 +199,7 @@ module Node = struct
     | T (Loading (sha1, _)) -> return sha1
     | T (Loaded_and_not_persisted { files; directories; submodules }) ->
       let%bind directory_lines =
-        Deferred.Map.map directories ~f:(fun node ->
+        Deferred.Map.map directories ~how:`Sequential ~f:(fun node ->
           let%map sha1 = persist' t node witness in
           sha1, Git_core_types.File_mode.Directory)
       in
@@ -561,17 +561,20 @@ let%test_module _ =
         printf !"%{Sha1.Hex}" sha1;
         [%expect {| aa72c4b8329d7027e72c6222fc1c5716d43f8703 |}];
         let%bind () =
-          Deferred.List.iter (Hashtbl.to_alist added) ~f:(fun (path, expected) ->
-            let path = String.split ~on:'/' path in
-            let%map result = get_file t ~path in
-            if not ([%compare.equal: File.t option] result (Some expected))
-            then
-              raise_s
-                [%message
-                  "Path missing or incorrectly mapped"
-                    (path : string list)
-                    (expected : File.t)
-                    (result : File.t option)])
+          Deferred.List.iter
+            (Hashtbl.to_alist added)
+            ~how:`Sequential
+            ~f:(fun (path, expected) ->
+              let path = String.split ~on:'/' path in
+              let%map result = get_file t ~path in
+              if not ([%compare.equal: File.t option] result (Some expected))
+              then
+                raise_s
+                  [%message
+                    "Path missing or incorrectly mapped"
+                      (path : string list)
+                      (expected : File.t)
+                      (result : File.t option)])
         in
         return ())
     ;;

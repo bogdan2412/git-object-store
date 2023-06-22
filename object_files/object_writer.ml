@@ -219,7 +219,7 @@ module With_header = struct
     let create_uninitialised ~object_directory =
       { raw = Raw.create_uninitialised ~object_directory
       ; object_type = Blob
-      ; buf = Bigstring.create (if Core.am_running_inline_test then 1 else 1 lsl 15)
+      ; buf = Bigstring.create (if Core.am_running_test then 1 else 1 lsl 15)
       ; start = 0
       ; pos = 0
       }
