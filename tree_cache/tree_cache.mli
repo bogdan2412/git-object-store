@@ -60,7 +60,12 @@ module Node : sig
 
   val get_file : tree_cache -> t -> path:string list -> File.t option Deferred.t
   val get_node : tree_cache -> t -> path:string list -> t option Deferred.t
-  val get_submodule : tree_cache -> t -> path:string list -> Sha1.Hex.t option Deferred.t
+
+  val get_submodule
+    :  tree_cache
+    -> t
+    -> path:string list
+    -> Sha1.Hex.t option Deferred.t
 
   (** Mutation methods *)
 

@@ -38,8 +38,7 @@ module Inflate : sig
       the end of the zlib stream is reached or the input is exhausted.
       Returns the number of bytes consumed. If the returned value is not
       equal to [src_len], then the end of the zlib stream was reached
-      early.
-  *)
+      early. *)
   val process : t -> Bigstring.t -> pos:int -> len:int -> int
 
   (** [finalise] should be called once no further data is going to be passed

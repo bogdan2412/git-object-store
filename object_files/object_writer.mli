@@ -25,8 +25,7 @@ module Raw : sig
       file under the [object_directory] named after the contents [SHA1]
       hash as below:
 
-      [object_directory]/XX/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-  *)
+      [object_directory]/XX/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX *)
   type t
 
   val create_uninitialised : object_directory:string -> t
@@ -48,8 +47,7 @@ module With_header : sig
     (** The [With_header.Unknown_size] module buffers chunks of data until
         fully read, prepends the data with a header of the form
         "[object_type] [data length as decimal integer]\000" and saves
-        the object to disk.
-    *)
+        the object to disk. *)
     type t
 
     val create_uninitialised : object_directory:string -> t

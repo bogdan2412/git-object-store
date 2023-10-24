@@ -215,7 +215,8 @@ module Node = struct
         Map.map submodules ~f:(fun sha1 -> sha1, Git_core_types.File_mode.Git_submodule)
       in
       let all_lines =
-        Map.merge directory_lines file_lines ~f:(fun ~key:name -> function
+        Map.merge directory_lines file_lines ~f:(fun ~key:name ->
+          function
           | `Both (dir, file) ->
             raise_s
               [%message
@@ -224,7 +225,8 @@ module Node = struct
                   (dir : Sha1.Hex.t * Git_core_types.File_mode.t)
                   (file : Sha1.Hex.t * Git_core_types.File_mode.t)]
           | `Left value | `Right value -> Some value)
-        |> Map.merge submodule_lines ~f:(fun ~key:name -> function
+        |> Map.merge submodule_lines ~f:(fun ~key:name ->
+          function
           | `Both (dir_or_file, submodule) ->
             raise_s
               [%message

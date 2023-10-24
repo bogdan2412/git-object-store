@@ -235,8 +235,11 @@ let[@inline] with_base_buffer_and_length
         (t :> ('Sha1_validation, [ `Have_external_base ], 'delta, [ `No_result ]) t)
       in
       let t
-        : ( 'Sha1_validation, [ `Have_external_base ], 'delta
-          , [ `Have_result of [ `Object ] ] ) t
+        : ( 'Sha1_validation
+          , [ `Have_external_base ]
+          , 'delta
+          , [ `Have_result of [ `Object ] ] )
+            t
         =
         f t
       in

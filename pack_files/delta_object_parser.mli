@@ -34,8 +34,7 @@ type 'Sha1_validation packed_result =
 
     [base] represents the base git object
     [delta] represents the set of delta instructions applied on top of [base].
-    [result] will contain the result of applying [delta] to [base].
-*)
+    [result] will contain the result of applying [delta] to [base]. *)
 val create
   :  'Sha1_validation Sha1_validation.t
   -> ('Sha1_validation, [ `No_base ], [ `No_delta ], [ `No_result ]) t

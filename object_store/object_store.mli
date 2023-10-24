@@ -255,7 +255,11 @@ module Packed : sig
 
       The file will not necessarily persist after [f] is called as packed objects are written
       to a temporary file that is deleted after [f] is called. *)
-  val with_on_disk_file : t -> Sha1.Hex.t -> f:(string -> 'a Deferred.t) -> 'a Deferred.t
+  val with_on_disk_file
+    :  t
+    -> Sha1.Hex.t
+    -> f:(string -> 'a Deferred.t)
+    -> 'a Deferred.t
 
   module Object_location = Object_location
 

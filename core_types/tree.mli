@@ -36,8 +36,7 @@ module Git_object_payload_parser : sig
       The expectation is that any unconsumed adata that remains after one call
       will be passed in again on the next call.
 
-      Raises on invalid input.
-  *)
+      Raises on invalid input. *)
   val consume_payload_exn : State.t -> Bigstring.t -> pos:int -> len:int -> int
 end
 
