@@ -1,6 +1,6 @@
 (** Library for manipulating a git object store via OCaml.
 
-    Copyright (C) 2020-2023  Bogdan-Cristian Tataroiu
+    Copyright (C) 2020-2024  Bogdan-Cristian Tataroiu
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -65,6 +65,20 @@ module Node0 = struct
              ; submodules = String.Map.empty
              })
     }
+  ;;
+
+  let empty_node_sha1 =
+    (* Validated in expect test below. *)
+    Sha1.Hex.of_string "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+  ;;
+
+  let is_empty t =
+    match t.state with
+    | T (Not_loaded sha1) | T (Loading (sha1, _)) ->
+      [%compare.equal: Sha1.Hex.t] sha1 empty_node_sha1
+    | T (Loaded_and_persisted { sha1 = _; directories; files; submodules })
+    | T (Loaded_and_not_persisted { directories; files; submodules }) ->
+      Map.is_empty directories && Map.is_empty files && Map.is_empty submodules
   ;;
 
   let of_disk_hash sha1 = { state = T (Not_loaded sha1) }
@@ -199,9 +213,14 @@ module Node = struct
     | T (Loading (sha1, _)) -> return sha1
     | T (Loaded_and_not_persisted { files; directories; submodules }) ->
       let%bind directory_lines =
-        Deferred.Map.map directories ~how:`Sequential ~f:(fun node ->
-          let%map sha1 = persist' t node witness in
-          sha1, Git_core_types.File_mode.Directory)
+        Deferred.Map.mapi directories ~how:`Sequential ~f:(fun ~key:name ~data:node ->
+          match is_empty node with
+          | true ->
+            raise_s
+              [%message "trees cannot contain empty trees as children" (name : string)]
+          | false ->
+            let%map sha1 = persist' t node witness in
+            sha1, Git_core_types.File_mode.Directory)
       in
       let file_lines =
         Map.map files ~f:(fun { sha1; kind } ->
@@ -300,14 +319,21 @@ module Node = struct
     let unchanged =
       match entry with
       | `Directory new_node ->
-        let old_directory_sha1 =
-          Map.find (directories state) name |> Option.bind ~f:sha1
-        in
-        let new_directory_sha1 = sha1 new_node in
-        (match old_directory_sha1, new_directory_sha1 with
-         | Some old_sha1, Some new_sha1
-           when [%compare.equal: Sha1.Hex.t] old_sha1 new_sha1 -> true
-         | _ -> false)
+        (match is_empty new_node with
+         | true ->
+           not
+             (Map.mem (directories state) name
+              || Map.mem (files state) name
+              || Map.mem (submodules state) name)
+         | false ->
+           let old_directory_sha1 =
+             Map.find (directories state) name |> Option.bind ~f:sha1
+           in
+           let new_directory_sha1 = sha1 new_node in
+           (match old_directory_sha1, new_directory_sha1 with
+            | Some old_sha1, Some new_sha1
+              when [%compare.equal: Sha1.Hex.t] old_sha1 new_sha1 -> true
+            | _ -> false))
       | `File { File.sha1 = new_sha1; _ } ->
         (match Map.find (files state) name with
          | Some { sha1 = old_sha1; _ } when [%compare.equal: Sha1.Hex.t] old_sha1 new_sha1
@@ -332,7 +358,8 @@ module Node = struct
                | _ -> files)
           ; directories =
               (match entry with
-               | `Directory data -> Map.add_exn directories ~key:name ~data
+               | `Directory data when not (is_empty data) ->
+                 Map.add_exn directories ~key:name ~data
                | _ -> directories)
           ; submodules =
               (match entry with
@@ -354,7 +381,7 @@ module Node = struct
         | Some node -> set_path_to_entry t node ~path:drest entry witness
         | None -> set_path_to_entry t (empty ()) ~path:drest entry witness
       in
-      (match is_persisted new_directory with
+      (match is_empty new_directory || is_persisted new_directory with
        | true -> (* Child directory was not changed *) return node
        | false ->
          let state =
@@ -415,7 +442,9 @@ module Node = struct
              ; submodules = Map.remove (submodules state) leaf
              }
          in
-         return (Some { state = T state }))
+         (match is_empty { state = T state } with
+          | true -> return None
+          | false -> return (Some { state = T state })))
     | directory :: drest ->
       let%bind state = ensure_loaded t node in
       (match Map.find (directories state) directory with
@@ -435,7 +464,9 @@ module Node = struct
                 ; submodules = submodules state
                 }
             in
-            return (Some { state = T state })))
+            (match is_empty { state = T state } with
+             | true -> return None
+             | false -> return (Some { state = T state }))))
   ;;
 
   let remove_path t node ~path =
@@ -486,6 +517,23 @@ let%test_module _ =
         then Char.of_int_exn (Char.to_int '0' + value)
         else Char.of_int_exn (Char.to_int 'a' + value - 10))
       |> Sha1.Hex.of_string
+    ;;
+
+    let%expect_test "Empty tree SHA1" =
+      Expect_test_helpers_async.with_temp_dir (fun object_directory ->
+        let%bind object_store =
+          Object_store.Packed.create
+            ~object_directory
+            ~max_concurrent_reads:4
+            Validate_sha1
+          >>| ok_exn
+        in
+        let t = create object_store ~root:(Node.empty ()) in
+        let%bind sha1 = persist t in
+        print_s [%sexp (sha1 : Sha1.Hex.t)];
+        [%expect {| 4b825dc642cb6eb9a060e54bf8d69288fbee4904 |}];
+        [%test_result: Sha1.Hex.t] ~expect:Node.empty_node_sha1 sha1;
+        Deferred.unit)
     ;;
 
     let%expect_test "Randomised test" =
@@ -561,7 +609,7 @@ let%test_module _ =
         let%bind () = random_removes t 20 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        [%expect {| aa72c4b8329d7027e72c6222fc1c5716d43f8703 |}];
+        [%expect {| 21d5df04a79a4c50f9195cb85ffd64e9a8169a41 |}];
         let%bind () =
           Deferred.List.iter
             (Hashtbl.to_alist added)
