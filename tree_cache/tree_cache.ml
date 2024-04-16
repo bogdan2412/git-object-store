@@ -144,6 +144,13 @@ let root t = t.root
 module Node = struct
   include Node0
 
+  module Entry = struct
+    type t =
+      | File of File.t
+      | Directory of Node0.t
+      | Submodule of Sha1.Hex.t
+  end
+
   let ensure_loaded t node : [ `Loaded ] state Deferred.t =
     match node.state with
     | T (Loaded_and_persisted _ as loaded) -> return loaded
@@ -281,49 +288,47 @@ module Node = struct
 
   let persist t node = Throttle.enqueue t.mutation_sequencer (persist' t node)
 
-  let rec get_file t node ~path =
+  let rec get_entry_map t node ~path ~f =
     let%bind state = ensure_loaded t node in
     match path with
     | [] -> return None
-    | [ file ] ->
-      (match Map.find (files state) file with
-       | Some sha1 -> return (Some sha1)
-       | None -> return None)
+    | [ entry ] -> return (f state entry)
     | directory :: rest ->
       (match Map.find (directories state) directory with
-       | Some node -> get_file t node ~path:rest
+       | Some node -> get_entry_map t node ~path:rest ~f
        | None -> return None)
   ;;
 
-  let rec get_submodule t node ~path =
-    let%bind state = ensure_loaded t node in
-    match path with
-    | [] -> return None
-    | [ submodule ] ->
-      (match Map.find (submodules state) submodule with
-       | Some sha1 -> return (Some sha1)
-       | None -> return None)
-    | directory :: rest ->
-      (match Map.find (directories state) directory with
-       | Some node -> get_submodule t node ~path:rest
-       | None -> return None)
+  let get_entry t node ~path =
+    get_entry_map t node ~path ~f:(fun state entry : Entry.t option ->
+      match Map.find (directories state) entry with
+      | Some node -> Some (Directory node)
+      | None ->
+        (match Map.find (files state) entry with
+         | Some file -> Some (File file)
+         | None ->
+           (match Map.find (submodules state) entry with
+            | Some sha1 -> Some (Submodule sha1)
+            | None -> None)))
   ;;
 
-  let rec get_node t node ~path =
-    let%bind state = ensure_loaded t node in
-    match path with
-    | [] -> return (Some node)
-    | directory :: rest ->
-      (match Map.find (directories state) directory with
-       | Some node -> get_node t node ~path:rest
-       | None -> return None)
+  let get_file t node ~path =
+    get_entry_map t node ~path ~f:(fun state entry -> Map.find (files state) entry)
+  ;;
+
+  let get_submodule t node ~path =
+    get_entry_map t node ~path ~f:(fun state entry -> Map.find (submodules state) entry)
+  ;;
+
+  let get_node t node ~path =
+    get_entry_map t node ~path ~f:(fun state entry -> Map.find (directories state) entry)
   ;;
 
   let add_entry_to_directory t node ~name entry =
     let%bind state = ensure_loaded t node in
     let unchanged =
-      match entry with
-      | `Directory new_node ->
+      match (entry : Entry.t) with
+      | Directory new_node ->
         (match is_empty new_node with
          | true ->
            not
@@ -339,12 +344,12 @@ module Node = struct
             | Some old_sha1, Some new_sha1
               when [%compare.equal: Sha1.Hex.t] old_sha1 new_sha1 -> true
             | _ -> false))
-      | `File { File.sha1 = new_sha1; _ } ->
+      | File { File.sha1 = new_sha1; _ } ->
         (match Map.find (files state) name with
          | Some { sha1 = old_sha1; _ } when [%compare.equal: Sha1.Hex.t] old_sha1 new_sha1
            -> true
          | _ -> false)
-      | `Submodule new_sha1 ->
+      | Submodule new_sha1 ->
         (match Map.find (submodules state) name with
          | Some old_sha1 when [%compare.equal: Sha1.Hex.t] old_sha1 new_sha1 -> true
          | _ -> false)
@@ -359,16 +364,16 @@ module Node = struct
         Loaded_and_not_persisted
           { files =
               (match entry with
-               | `File data -> Map.add_exn files ~key:name ~data
+               | File data -> Map.add_exn files ~key:name ~data
                | _ -> files)
           ; directories =
               (match entry with
-               | `Directory data when not (is_empty data) ->
+               | Directory data when not (is_empty data) ->
                  Map.add_exn directories ~key:name ~data
                | _ -> directories)
           ; submodules =
               (match entry with
-               | `Submodule data -> Map.add_exn submodules ~key:name ~data
+               | Submodule data -> Map.add_exn submodules ~key:name ~data
                | _ -> submodules)
           }
       in
@@ -400,8 +405,13 @@ module Node = struct
          return { state = T state })
   ;;
 
+  let add_entry t node ~path entry =
+    Throttle.enqueue t.mutation_sequencer (fun witness ->
+      set_path_to_entry t node ~path entry witness)
+  ;;
+
   let add_file' t node ~path sha1 kind witness =
-    set_path_to_entry t node ~path (`File { File.sha1; kind }) witness
+    set_path_to_entry t node ~path (File { File.sha1; kind }) witness
   ;;
 
   let add_file t node ~path sha1 kind =
@@ -410,7 +420,7 @@ module Node = struct
   ;;
 
   let add_node' t node ~path new_node witness =
-    set_path_to_entry t node ~path (`Directory new_node) witness
+    set_path_to_entry t node ~path (Directory new_node) witness
   ;;
 
   let add_node t node ~path new_node =
@@ -419,7 +429,7 @@ module Node = struct
   ;;
 
   let add_submodule' t node ~path sha1 witness =
-    set_path_to_entry t node ~path (`Submodule sha1) witness
+    set_path_to_entry t node ~path (Submodule sha1) witness
   ;;
 
   let add_submodule t node ~path sha1 =
@@ -480,9 +490,16 @@ module Node = struct
   ;;
 end
 
+let get_entry t ~path = Node.get_entry t t.root ~path
 let get_file t ~path = Node.get_file t t.root ~path
 let get_node t ~path = Node.get_node t t.root ~path
 let get_submodule t ~path = Node.get_submodule t t.root ~path
+
+let add_entry t ~path entry =
+  Throttle.enqueue t.mutation_sequencer (fun witness ->
+    let%map root = Node.set_path_to_entry t t.root ~path entry witness in
+    t.root <- root)
+;;
 
 let add_file t ~path sha1 kind =
   Throttle.enqueue t.mutation_sequencer (fun witness ->
