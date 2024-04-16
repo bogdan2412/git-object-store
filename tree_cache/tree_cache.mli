@@ -27,6 +27,15 @@ module Node : sig
   type _ state
   type t
 
+  module Entry : sig
+    type node := t
+
+    type t =
+      | File of File.t
+      | Directory of node
+      | Submodule of Sha1.Hex.t
+  end
+
   (** Constructors *)
 
   val empty : unit -> t
@@ -41,6 +50,7 @@ module Node : sig
 
   (** Path accessors *)
 
+  val get_entry : tree_cache -> t -> path:string list -> Entry.t option Deferred.t
   val get_file : tree_cache -> t -> path:string list -> File.t option Deferred.t
   val get_node : tree_cache -> t -> path:string list -> t option Deferred.t
 
@@ -51,6 +61,8 @@ module Node : sig
     -> Sha1.Hex.t option Deferred.t
 
   (** Mutation methods *)
+
+  val add_entry : tree_cache -> t -> path:string list -> Entry.t -> t Deferred.t
 
   val add_file
     :  tree_cache
@@ -81,12 +93,14 @@ val root : t -> Node.t
 
 (** Path accessors *)
 
+val get_entry : t -> path:string list -> Node.Entry.t option Deferred.t
 val get_file : t -> path:string list -> File.t option Deferred.t
 val get_node : t -> path:string list -> Node.t option Deferred.t
 val get_submodule : t -> path:string list -> Sha1.Hex.t option Deferred.t
 
 (** Mutation methods *)
 
+val add_entry : t -> path:string list -> Node.Entry.t -> unit Deferred.t
 val add_file : t -> path:string list -> Sha1.Hex.t -> File.Kind.t -> unit Deferred.t
 val add_node : t -> path:string list -> Node.t -> unit Deferred.t
 val add_submodule : t -> path:string list -> Sha1.Hex.t -> unit Deferred.t
