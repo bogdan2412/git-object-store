@@ -122,6 +122,8 @@ type t =
   ; mutable root : Node0.t
   ; loaded : [ `Loaded ] Node0.state Deferred.t Sha1.Hex.Table.t
   ; mutation_sequencer : Sequencer_witness.t Sequencer.t
+  ; git_tree_writer : Tree_writer.t
+  ; git_tree_writer_volatile_sha1_raw : Sha1.Raw.Volatile.t
   }
 
 let create object_store ~root =
@@ -130,6 +132,10 @@ let create object_store ~root =
   ; loaded = Sha1.Hex.Table.create ()
   ; mutation_sequencer =
       Sequencer.create ~continue_on_error:false (Sequencer_witness.create ())
+  ; git_tree_writer =
+      Tree_writer.create_uninitialised
+        ~object_directory:(Object_store.Packed.object_directory object_store)
+  ; git_tree_writer_volatile_sha1_raw = Sha1.Raw.Volatile.create ()
   }
 ;;
 
@@ -255,16 +261,15 @@ module Node = struct
                   (submodule : Sha1.Hex.t * Git_core_types.File_mode.t)]
           | `Left value | `Right value -> Some value)
       in
-      let git_tree_writer =
-        Tree_writer.create_uninitialised
-          ~object_directory:(Object_store.Packed.object_directory t.object_store)
-      in
-      let%bind () = Tree_writer.init_or_reset git_tree_writer ~dry_run:false in
-      let sha1_raw = Sha1.Raw.Volatile.create () in
+      let%bind () = Tree_writer.init_or_reset t.git_tree_writer ~dry_run:false in
       Map.iteri all_lines ~f:(fun ~key:name ~data:(sha1, kind) ->
-        Sha1.Raw.Volatile.of_hex sha1 sha1_raw;
-        Tree_writer.write_tree_line' git_tree_writer kind sha1_raw ~name);
-      let%bind sha1_raw = Tree_writer.finalise git_tree_writer in
+        Sha1.Raw.Volatile.of_hex sha1 t.git_tree_writer_volatile_sha1_raw;
+        Tree_writer.write_tree_line'
+          t.git_tree_writer
+          kind
+          t.git_tree_writer_volatile_sha1_raw
+          ~name);
+      let%bind sha1_raw = Tree_writer.finalise t.git_tree_writer in
       let sha1 = Sha1.Raw.to_hex sha1_raw in
       let state = Loaded_and_persisted { sha1; files; directories; submodules } in
       let%map state =
