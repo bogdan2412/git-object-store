@@ -64,7 +64,7 @@ module Find_result : sig
           { mutable pack : 'Sha1_validation Pack_reader.t
           ; mutable offset : int
           }
-      | Unpacked_file_if_exists of { mutable path : string }
+      | Unpacked_file_if_exists of { mutable path : string Lazy.t }
       (** [Unpacked_file_if_exists] does not verify that the path exists, it
           merely implies that the file is not present in any pack file. *)
   end
@@ -76,6 +76,11 @@ end
 val find_object
   :  'Sha1_validation t
   -> Sha1.Hex.t
+  -> 'Sha1_validation Find_result.Volatile.t
+
+val find_object'
+  :  'Sha1_validation t
+  -> Sha1.Raw.Volatile.t
   -> 'Sha1_validation Find_result.Volatile.t
 
 (** [read_object] reads an object with the given SHA1 hash and calls the relevant callbacks
@@ -184,6 +189,28 @@ module Packed : sig
     -> t Or_error.t Deferred.t
 
   val object_directory : t -> string
+
+  module Find_result : sig
+    module Volatile : sig
+      (** Do not keep references to instances of this type as they will be mutated
+          on every call to [find_object]. *)
+      type t = private
+        | In_pack_file of
+            { mutable pack : Pack_reader.Packed.t
+            ; mutable index : int
+            }
+        | Unpacked_file_if_exists of { mutable path : string Lazy.t }
+        (** [Unpacked_file_if_exists] does not verify that the path exists, it
+            merely implies that the file is not present in any pack file. *)
+    end
+  end
+
+  (** [find_object] returns whether the object with the given SHA1 exists in a pack
+      file or should be read from an unpacked file (assuming it exists at all, the
+      method does not check that this is the case). *)
+  val find_object : t -> Sha1.Hex.t -> Find_result.Volatile.t
+
+  val find_object' : t -> Sha1.Raw.Volatile.t -> Find_result.Volatile.t
 
   (** [read_object] reads an object with the given SHA1 hash and calls the relevant callbacks
       depending on the kind of object.

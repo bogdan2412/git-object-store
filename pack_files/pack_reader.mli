@@ -94,6 +94,12 @@ end
     Raises if [index] is outside of the range [0 .. items_in_pack - 1]. *)
 val size : _ t -> index:int -> Size.Volatile.t
 
+module Packed : sig
+  type _ non_packed
+  type t = T : _ non_packed -> t
+end
+with type 'a non_packed := 'a t
+
 module Low_level : sig
   val index : _ t -> Index_reader.t
 

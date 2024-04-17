@@ -167,7 +167,7 @@ module Find_result : sig
           { mutable pack : 'Sha1_validation Pack_reader.t
           ; mutable offset : int
           }
-      | Unpacked_file_if_exists of { mutable path : string }
+      | Unpacked_file_if_exists of { mutable path : string Lazy.t }
 
     val in_pack_file_at_index
       :  'Sha1_validation Sha1_validation.t
@@ -183,7 +183,7 @@ module Find_result : sig
 
     val unpacked_file_if_exists
       :  'Sha1_validation Sha1_validation.t
-      -> string
+      -> string Lazy.t
       -> 'Sha1_validation t
   end
 end = struct
@@ -197,7 +197,7 @@ end = struct
           { mutable pack : 'Sha1_validation Pack_reader.t
           ; mutable offset : int
           }
-      | Unpacked_file_if_exists of { mutable path : string }
+      | Unpacked_file_if_exists of { mutable path : string Lazy.t }
 
     let unit_in_pack_file_at_index : unit Pack_reader.t -> index:int -> unit t =
       let value = In_pack_file_at_index { pack = Obj.magic (); index = 0 } in
@@ -270,8 +270,8 @@ end = struct
       | Validate_sha1 -> sha1_in_pack_file_at_offset pack ~offset
     ;;
 
-    let unit_unpacked_file_if_exists : string -> unit t =
-      let value = Unpacked_file_if_exists { path = "" } in
+    let unit_unpacked_file_if_exists : string Lazy.t -> unit t =
+      let value = Unpacked_file_if_exists { path = Lazy.from_val "" } in
       match value with
       | Unpacked_file_if_exists record ->
         fun path ->
@@ -280,8 +280,8 @@ end = struct
       | _ -> assert false
     ;;
 
-    let sha1_unpacked_file_if_exists : string -> Sha1.Hex.t t =
-      let value = Unpacked_file_if_exists { path = "" } in
+    let sha1_unpacked_file_if_exists : string Lazy.t -> Sha1.Hex.t t =
+      let value = Unpacked_file_if_exists { path = Lazy.from_val "" } in
       match value with
       | Unpacked_file_if_exists record ->
         fun path ->
@@ -307,25 +307,24 @@ let unpacked_disk_path t sha1 =
     (String.sub sha1_string ~pos:2 ~len:(Sha1.Hex.length - 2))
 ;;
 
-let find_object =
-  let rec loop_packs t sha1 packs =
+let find_object_gen =
+  let rec loop_packs t sha1_raw sha1_hex packs =
     match packs with
     | [] ->
-      let path = unpacked_disk_path t sha1 in
+      let path = Lazy.from_fun (fun () -> unpacked_disk_path t (force sha1_hex)) in
       Find_result.Volatile.unpacked_file_if_exists t.sha1_validation path
     | (_, pack) :: packs ->
-      (match Pack_reader.find_sha1_index' pack t.sha1_buf with
-       | None -> loop_packs t sha1 packs
+      (match Pack_reader.find_sha1_index' pack sha1_raw with
+       | None -> loop_packs t sha1_raw sha1_hex packs
        | Some { index } ->
          Find_result.Volatile.in_pack_file_at_index t.sha1_validation pack ~index)
   in
-  fun t sha1 ->
-    Sha1.Raw.Volatile.of_hex sha1 t.sha1_buf;
+  fun t sha1_raw sha1_hex ->
     match t.multi_pack_index with
-    | No_multi_pack_index -> loop_packs t sha1 t.additional_packs
+    | No_multi_pack_index -> loop_packs t sha1_raw sha1_hex t.additional_packs
     | Multi_pack_index { index; packs } ->
-      (match Multi_pack_index_reader.find_sha1_index' index t.sha1_buf with
-       | None -> loop_packs t sha1 t.additional_packs
+      (match Multi_pack_index_reader.find_sha1_index' index sha1_raw with
+       | None -> loop_packs t sha1_raw sha1_hex t.additional_packs
        | Some { index = object_index } ->
          let pack_id = Multi_pack_index_reader.pack_id index ~index:object_index in
          let pack_offset =
@@ -336,6 +335,15 @@ let find_object =
            t.sha1_validation
            pack
            ~offset:pack_offset)
+;;
+
+let find_object t sha1 =
+  Sha1.Raw.Volatile.of_hex sha1 t.sha1_buf;
+  find_object_gen t t.sha1_buf (Lazy.from_val sha1)
+;;
+
+let find_object' t sha1_raw =
+  find_object_gen t sha1_raw (Lazy.from_fun (fun () -> Sha1.Raw.Volatile.to_hex sha1_raw))
 ;;
 
 let read_object_from_unpacked_file
@@ -400,6 +408,7 @@ let read_object
        | Validate_sha1 -> sha1);
     Deferred.unit
   | Unpacked_file_if_exists { path } ->
+    let path = force path in
     (match%bind Sys.is_file_exn path with
      | false -> raise_s [%message "Object does not exist" (sha1 : Sha1.Hex.t)]
      | true ->
@@ -452,6 +461,7 @@ let read_raw_object (type a) (t : a t) sha1 ~on_header ~on_payload ~push_back =
        | Validate_sha1 -> sha1);
     Deferred.unit
   | Unpacked_file_if_exists { path } ->
+    let path = force path in
     (match%bind Sys.is_file_exn path with
      | false -> raise_s [%message "Object does not exist" (sha1 : Sha1.Hex.t)]
      | true ->
@@ -525,7 +535,7 @@ let size t sha1 =
       read_raw_object_from_unpacked_file
         t
         sha1
-        path
+        (force path)
         ~on_header:(fun (_ : Object_type.t) ~size ->
           received_size := true;
           returned_size := size)
@@ -546,7 +556,6 @@ let with_on_disk_file (type a) (t : a t) sha1 ~f =
   match%bind Sys.is_file_exn path with
   | true -> f path
   | false ->
-    Sha1.Raw.Volatile.of_hex sha1 t.sha1_buf;
     let object_type_and_length = Set_once.create () in
     let data = Set_once.create () in
     (match find_object t sha1 with
@@ -581,7 +590,7 @@ let with_on_disk_file (type a) (t : a t) sha1 ~f =
         writer
         object_type
         ~length
-        ~dry_run:false
+        Object_writer.Mode.write_all
     in
     let data = Set_once.get_exn data [%here] in
     Object_writer.With_header.Known_size.append_data
@@ -676,6 +685,89 @@ module Packed = struct
   ;;
 
   let object_directory (T object_store) = object_directory object_store
+
+  module Find_result : sig
+    module Volatile : sig
+      (** Do not keep references to instances of this type as they will be mutated
+          on every call to [find_object]. *)
+      type t = private
+        | In_pack_file of
+            { mutable pack : Pack_reader.Packed.t
+            ; mutable index : int
+            }
+        | Unpacked_file_if_exists of { mutable path : string Lazy.t }
+
+      val in_pack_file : Pack_reader.Packed.t -> index:int -> t
+      val unpacked_file_if_exists : string Lazy.t -> t
+    end
+  end = struct
+    module Volatile = struct
+      type t =
+        | In_pack_file of
+            { mutable pack : Pack_reader.Packed.t
+            ; mutable index : int
+            }
+        | Unpacked_file_if_exists of { mutable path : string Lazy.t }
+
+      let in_pack_file =
+        let value = In_pack_file { pack = Obj.magic (); index = 0 } in
+        match value with
+        | In_pack_file record ->
+          fun pack ~index ->
+            record.pack <- pack;
+            record.index <- index;
+            value
+        | _ -> assert false
+      ;;
+
+      let unpacked_file_if_exists =
+        let value = Unpacked_file_if_exists { path = Lazy.from_val "" } in
+        match value with
+        | Unpacked_file_if_exists record ->
+          fun path ->
+            record.path <- path;
+            value
+        | _ -> assert false
+      ;;
+    end
+  end
+
+  let find_object (T object_store) sha1 =
+    match find_object object_store sha1 with
+    | In_pack_file_at_index { pack; index } ->
+      Find_result.Volatile.in_pack_file (T pack) ~index
+    | In_pack_file_at_offset { pack; offset = _ } ->
+      let index =
+        Sha1.Raw.Volatile.of_hex sha1 object_store.sha1_buf;
+        match Pack_reader.find_sha1_index' pack object_store.sha1_buf with
+        | Some { index } -> index
+        | None ->
+          raise_s
+            [%message "Expected object to be present in pack file" (sha1 : Sha1.Hex.t)]
+      in
+      Find_result.Volatile.in_pack_file (T pack) ~index
+    | Unpacked_file_if_exists { path } ->
+      Find_result.Volatile.unpacked_file_if_exists path
+  ;;
+
+  let find_object' (T object_store) sha1 =
+    match find_object' object_store sha1 with
+    | In_pack_file_at_index { pack; index } ->
+      Find_result.Volatile.in_pack_file (T pack) ~index
+    | In_pack_file_at_offset { pack; offset = _ } ->
+      let index =
+        match Pack_reader.find_sha1_index' pack sha1 with
+        | Some { index } -> index
+        | None ->
+          raise_s
+            [%message
+              "Expected object to be present in pack file"
+                ~sha1:(Sha1.Raw.Volatile.to_hex sha1 : Sha1.Hex.t)]
+      in
+      Find_result.Volatile.in_pack_file (T pack) ~index
+    | Unpacked_file_if_exists { path } ->
+      Find_result.Volatile.unpacked_file_if_exists path
+  ;;
 
   let read_object
         (T object_store)

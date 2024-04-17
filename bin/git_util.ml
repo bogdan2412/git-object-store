@@ -167,17 +167,17 @@ let read_sha1_from_store ~object_directory sha1 =
         return `Ok))
 ;;
 
-let write_commit_from_file ~object_directory file ~dry_run =
+let write_commit_from_file ~object_directory mode file =
   Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
     let%bind commit = Reader.load_sexp_exn file [%of_sexp: Git.Commit.t] in
-    let%map sha1 = Git.Object_writer.Commit.write' ~object_directory commit ~dry_run in
+    let%map sha1 = Git.Object_writer.Commit.write' ~object_directory commit mode in
     printf !"%{Sha1.Hex}\n" (Sha1.Raw.to_hex sha1))
 ;;
 
-let write_tree_from_file ~object_directory file ~dry_run =
+let write_tree_from_file ~object_directory mode file =
   Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
     let tree_writer = Git.Object_writer.Tree.create_uninitialised ~object_directory in
-    let%bind () = Git.Object_writer.Tree.init_or_reset tree_writer ~dry_run in
+    let%bind () = Git.Object_writer.Tree.init_or_reset tree_writer mode in
     let%bind raw_tree_lines = Reader.file_lines file in
     List.iter raw_tree_lines ~f:(fun raw_line ->
       let line = Sexp.scan_sexps (Lexing.from_string raw_line) in
@@ -211,7 +211,7 @@ let write_tree_from_file ~object_directory file ~dry_run =
     printf !"%{Sha1.Hex}\n" (Sha1.Raw.to_hex sha1))
 ;;
 
-let write_blob_from_file' ~object_directory file ~dry_run =
+let write_blob_from_file' ~object_directory mode file =
   Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
     let%bind stat = Unix.stat file in
     let length = Int64.to_int_exn stat.size in
@@ -221,7 +221,7 @@ let write_blob_from_file' ~object_directory file ~dry_run =
     let%bind () =
       Reader.with_file file ~f:(fun reader ->
         let%bind () =
-          Git.Object_writer.Blob.Known_size.init_or_reset blob_writer ~length ~dry_run
+          Git.Object_writer.Blob.Known_size.init_or_reset blob_writer ~length mode
         in
         match%bind
           Reader.read_one_chunk_at_a_time reader ~handle_chunk:(fun buf ~pos ~len ->
@@ -238,17 +238,15 @@ let write_blob_from_file' ~object_directory file ~dry_run =
     Git.Object_writer.Blob.Known_size.finalise_exn blob_writer)
 ;;
 
-let write_blob_from_file ~object_directory file ~dry_run =
-  let%map.Deferred.Or_error sha1 =
-    write_blob_from_file' ~object_directory file ~dry_run
-  in
+let write_blob_from_file ~object_directory mode file =
+  let%map.Deferred.Or_error sha1 = write_blob_from_file' ~object_directory mode file in
   printf !"%{Sha1.Hex}\n" (Sha1.Raw.to_hex sha1)
 ;;
 
-let rec write_tree_from_directory' ~object_directory ~source_directory ~dry_run =
+let rec write_tree_from_directory' ~object_directory ~source_directory mode =
   Monitor.try_with_or_error ~rest:`Raise ~extract_exn:true (fun () ->
     let tree_writer = Git.Object_writer.Tree.create_uninitialised ~object_directory in
-    let%bind () = Git.Object_writer.Tree.init_or_reset tree_writer ~dry_run in
+    let%bind () = Git.Object_writer.Tree.init_or_reset tree_writer mode in
     let%bind entries = Sys.readdir source_directory in
     Array.sort entries ~compare:[%compare: string];
     let%bind () =
@@ -263,9 +261,7 @@ let rec write_tree_from_directory' ~object_directory ~source_directory ~dry_run 
                 (path : string)
                 ~kind:(stat.kind : Unix.File_kind.t)]
         | `File ->
-          let%bind sha1 =
-            write_blob_from_file' ~object_directory path ~dry_run >>| ok_exn
-          in
+          let%bind sha1 = write_blob_from_file' ~object_directory mode path >>| ok_exn in
           Git.Object_writer.Tree.write_tree_line
             tree_writer
             (if stat.perm land 0o111 = 0 then Non_executable_file else Executable_file)
@@ -281,7 +277,7 @@ let rec write_tree_from_directory' ~object_directory ~source_directory ~dry_run 
             Git.Object_writer.Blob.Known_size.init_or_reset
               blob_writer
               ~length:(String.length link_path)
-              ~dry_run
+              mode
           in
           Git.Object_writer.Blob.Known_size.append_data
             blob_writer
@@ -293,7 +289,7 @@ let rec write_tree_from_directory' ~object_directory ~source_directory ~dry_run 
           Deferred.unit
         | `Directory ->
           let%bind sha1 =
-            write_tree_from_directory' ~object_directory ~source_directory:path ~dry_run
+            write_tree_from_directory' ~object_directory ~source_directory:path mode
             >>| ok_exn
           in
           Git.Object_writer.Tree.write_tree_line tree_writer Directory sha1 ~name:entry;
@@ -302,9 +298,9 @@ let rec write_tree_from_directory' ~object_directory ~source_directory ~dry_run 
     Git.Object_writer.Tree.finalise tree_writer)
 ;;
 
-let write_tree_from_directory ~object_directory ~source_directory ~dry_run =
+let write_tree_from_directory ~object_directory ~source_directory mode =
   let%map.Deferred.Or_error sha1 =
-    write_tree_from_directory' ~object_directory ~source_directory ~dry_run
+    write_tree_from_directory' ~object_directory ~source_directory mode
   in
   printf !"%{Sha1.Hex}\n" (Sha1.Raw.to_hex sha1)
 ;;
@@ -397,9 +393,14 @@ let read_sha1_from_store_command =
       fun () -> read_sha1_from_store ~object_directory sha1]
 ;;
 
-let dry_run_flag =
-  Command.Param.(
-    flag "-dry-run" no_arg ~doc:" Do not persist any changes to the object directory")
+let mode_flag =
+  [%map_open.Command
+    let dry_run =
+      flag "-dry-run" no_arg ~doc:" Do not persist any changes to the object directory"
+    in
+    match dry_run with
+    | false -> Git_object_files.Writer.Mode.write_all
+    | true -> Dry_run]
 ;;
 
 let write_commit_from_file_command =
@@ -410,8 +411,8 @@ let write_commit_from_file_command =
     [%map_open.Command
       let object_directory = Git.Util.object_directory_param
       and file = anon ("SEXP-FILE" %: Filename_unix.arg_type)
-      and dry_run = dry_run_flag in
-      fun () -> write_commit_from_file ~object_directory file ~dry_run]
+      and mode = mode_flag in
+      fun () -> write_commit_from_file ~object_directory mode file]
 ;;
 
 let write_tree_from_file_command =
@@ -422,8 +423,8 @@ let write_tree_from_file_command =
     [%map_open.Command
       let object_directory = Git.Util.object_directory_param
       and file = anon ("FILE" %: Filename_unix.arg_type)
-      and dry_run = dry_run_flag in
-      fun () -> write_tree_from_file ~object_directory file ~dry_run]
+      and mode = mode_flag in
+      fun () -> write_tree_from_file ~object_directory mode file]
 ;;
 
 let write_blob_from_file_command =
@@ -432,8 +433,8 @@ let write_blob_from_file_command =
     [%map_open.Command
       let object_directory = Git.Util.object_directory_param
       and file = anon ("FILE" %: Filename_unix.arg_type)
-      and dry_run = dry_run_flag in
-      fun () -> write_blob_from_file ~object_directory file ~dry_run]
+      and mode = mode_flag in
+      fun () -> write_blob_from_file ~object_directory mode file]
 ;;
 
 let write_tree_from_directory_command =
@@ -442,8 +443,8 @@ let write_tree_from_directory_command =
     [%map_open.Command
       let object_directory = Git.Util.object_directory_param
       and source_directory = anon ("SOURCE-DIRECTORY" %: Filename_unix.arg_type)
-      and dry_run = dry_run_flag in
-      fun () -> write_tree_from_directory ~object_directory ~source_directory ~dry_run]
+      and mode = mode_flag in
+      fun () -> write_tree_from_directory ~object_directory ~source_directory mode]
 ;;
 
 let command =

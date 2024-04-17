@@ -19,6 +19,14 @@ open! Core
 open! Async
 open! Import
 
+module Mode : sig
+  type t =
+    | Write of { should_discard : Sha1.Raw.Volatile.t -> bool }
+    | Dry_run
+
+  val write_all : t
+end
+
 module Raw : sig
   (** The [Raw] module receives chunks of data, compresses it with zlib,
       computes the contents' SHA1 hash and saves the compressed output in a
@@ -35,7 +43,7 @@ module Raw : sig
       of [true] means that the object will not be stored on disk, but the
       corresponding SHA1 hash will still be computed, whereas a value of
       [false] means that the object will be stored on disk. *)
-  val init_or_reset : t -> dry_run:bool -> unit Deferred.t
+  val init_or_reset : t -> Mode.t -> unit Deferred.t
 
   val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
   val finalise : t -> Sha1.Raw.t Deferred.t
@@ -51,7 +59,7 @@ module With_header : sig
     type t
 
     val create_uninitialised : object_directory:string -> t
-    val init_or_reset : t -> Object_type.t -> dry_run:bool -> unit Deferred.t
+    val init_or_reset : t -> Object_type.t -> Mode.t -> unit Deferred.t
     val double_buffer_space : t -> unit
     val make_room : t -> for_bytes:int -> unit
     val buf : t -> Bigstring.t
@@ -70,14 +78,7 @@ module With_header : sig
     type t
 
     val create_uninitialised : object_directory:string -> t
-
-    val init_or_reset
-      :  t
-      -> Object_type.t
-      -> length:int
-      -> dry_run:bool
-      -> unit Deferred.t
-
+    val init_or_reset : t -> Object_type.t -> length:int -> Mode.t -> unit Deferred.t
     val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
 
     (** Raises if appended data does not match the length passed into [init_or_reset] *)
@@ -93,14 +94,10 @@ module Commit : sig
   val create : object_directory:string -> t
 
   (** Can be called multiple times for different commits using the same [t]. *)
-  val write : t -> Commit.t -> dry_run:bool -> Sha1.Raw.t Deferred.t
+  val write : t -> Commit.t -> Mode.t -> Sha1.Raw.t Deferred.t
 
   (** Shortcut for [create ~object_directory] followed by [write]. *)
-  val write'
-    :  object_directory:string
-    -> Commit.t
-    -> dry_run:bool
-    -> Sha1.Raw.t Deferred.t
+  val write' : object_directory:string -> Commit.t -> Mode.t -> Sha1.Raw.t Deferred.t
 end
 
 module Tag : sig
@@ -109,17 +106,17 @@ module Tag : sig
   val create : object_directory:string -> t
 
   (** Can be called multiple times for different tags using the same [t]. *)
-  val write : t -> Tag.t -> dry_run:bool -> Sha1.Raw.t Deferred.t
+  val write : t -> Tag.t -> Mode.t -> Sha1.Raw.t Deferred.t
 
   (** Shortcut for [create ~object_directory] followed by [write]. *)
-  val write' : object_directory:string -> Tag.t -> dry_run:bool -> Sha1.Raw.t Deferred.t
+  val write' : object_directory:string -> Tag.t -> Mode.t -> Sha1.Raw.t Deferred.t
 end
 
 module Tree : sig
   type t
 
   val create_uninitialised : object_directory:string -> t
-  val init_or_reset : t -> dry_run:bool -> unit Deferred.t
+  val init_or_reset : t -> Mode.t -> unit Deferred.t
   val write_tree_line : t -> File_mode.t -> Sha1.Raw.t -> name:string -> unit
   val write_tree_line' : t -> File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit
   val finalise : t -> Sha1.Raw.t Deferred.t
@@ -131,7 +128,7 @@ module Blob : sig
     type t
 
     val create_uninitialised : object_directory:string -> t
-    val init_or_reset : t -> dry_run:bool -> unit Deferred.t
+    val init_or_reset : t -> Mode.t -> unit Deferred.t
     val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
     val written_so_far : t -> int
     val finalise : t -> Sha1.Raw.t Deferred.t
@@ -142,7 +139,7 @@ module Blob : sig
     type t
 
     val create_uninitialised : object_directory:string -> t
-    val init_or_reset : t -> length:int -> dry_run:bool -> unit Deferred.t
+    val init_or_reset : t -> length:int -> Mode.t -> unit Deferred.t
     val append_data : t -> Bigstring.t -> pos:int -> len:int -> unit
 
     (** Raises if appended data does not match the length passed into [init_or_reset] *)

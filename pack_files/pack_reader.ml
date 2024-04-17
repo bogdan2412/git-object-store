@@ -413,6 +413,11 @@ let size t ~index =
   size' t ~pack_offset
 ;;
 
+module Packed = struct
+  type 'a non_packed = 'a t
+  type t = T : _ non_packed -> t
+end
+
 module Low_level = struct
   let index t = t.index
   let read_object = read_object'

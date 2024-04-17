@@ -123,6 +123,7 @@ type t =
   ; loaded : [ `Loaded ] Node0.state Deferred.t Sha1.Hex.Table.t
   ; mutation_sequencer : Sequencer_witness.t Sequencer.t
   ; git_tree_writer : Tree_writer.t
+  ; git_tree_writer_mode : Git_object_files.Writer.Mode.t
   ; git_tree_writer_volatile_sha1_raw : Sha1.Raw.Volatile.t
   }
 
@@ -135,6 +136,14 @@ let create object_store ~root =
   ; git_tree_writer =
       Tree_writer.create_uninitialised
         ~object_directory:(Object_store.Packed.object_directory object_store)
+  ; git_tree_writer_mode =
+      Write
+        { should_discard =
+            (fun sha1_raw ->
+               match Object_store.Packed.find_object' object_store sha1_raw with
+               | In_pack_file _ -> true
+               | Unpacked_file_if_exists _ -> false)
+        }
   ; git_tree_writer_volatile_sha1_raw = Sha1.Raw.Volatile.create ()
   }
 ;;
@@ -268,7 +277,7 @@ module Node = struct
                   (submodule : Sha1.Hex.t * Git_core_types.File_mode.t)]
           | `Left value | `Right value -> Some value)
       in
-      let%bind () = Tree_writer.init_or_reset t.git_tree_writer ~dry_run:false in
+      let%bind () = Tree_writer.init_or_reset t.git_tree_writer t.git_tree_writer_mode in
       Map.iteri all_lines ~f:(fun ~key:name ~data:(sha1, kind) ->
         Sha1.Raw.Volatile.of_hex sha1 t.git_tree_writer_volatile_sha1_raw;
         Tree_writer.write_tree_line'
@@ -278,9 +287,9 @@ module Node = struct
           ~name);
       let%bind sha1_raw = Tree_writer.finalise t.git_tree_writer in
       let sha1 = Sha1.Raw.to_hex sha1_raw in
-      let state = Loaded_and_persisted { sha1; files; directories; submodules } in
       let%map state =
-        Hashtbl.find_or_add t.loaded sha1 ~default:(fun () -> return state)
+        Hashtbl.find_or_add t.loaded sha1 ~default:(fun () ->
+          return (Loaded_and_persisted { sha1; files; directories; submodules }))
       in
       node.state <- T state;
       sha1

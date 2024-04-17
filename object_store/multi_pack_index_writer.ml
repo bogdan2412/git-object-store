@@ -438,7 +438,7 @@ module For_testing = struct
             Object_writer.Blob.Known_size.init_or_reset
               blob_writer
               ~length:(String.length blob)
-              ~dry_run:false
+              Object_writer.Mode.write_all
           in
           Object_writer.Blob.Known_size.append_data
             blob_writer
