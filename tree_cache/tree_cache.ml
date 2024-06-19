@@ -624,23 +624,23 @@ let%test_module _ =
         let%bind () = random_adds t 100 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        [%expect {| 90ae00be13448bbdbcb751e067976c0811b20280 |}];
+        [%expect {| 02e2ce6b94b54cfc4a1ca1b9b7e2bf9b26628ff7 |}];
         let t = create object_store ~root:(Node.of_disk_hash sha1) in
         let%bind () = random_adds t 100 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        [%expect {| c871a5c3ac8bdd71738798b3c31d2f86ee951a05 |}];
+        [%expect {| 402371cc128563c93d4add4e93145aa184f7086d |}];
         let t = create object_store ~root:(Node.of_disk_hash sha1) in
         let%bind () = random_adds t 100 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        [%expect {| adca120a86840e38a1f880d1dc89e3d9360809b1 |}];
+        [%expect {| 5a3941929695b776327f7ff9ee0dcc9d6173d43b |}];
         let%bind () = random_removes t 50 in
         let%bind () = random_adds t 100 in
         let%bind () = random_removes t 20 in
         let%bind sha1 = persist t in
         printf !"%{Sha1.Hex}" sha1;
-        [%expect {| 21d5df04a79a4c50f9195cb85ffd64e9a8169a41 |}];
+        [%expect {| 9fc3fbcc17e7ecb2fac140bf98fb21f2fdd6cc86 |}];
         let%bind () =
           Deferred.List.iter
             (Hashtbl.to_alist added)
