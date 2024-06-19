@@ -42,7 +42,7 @@ struct wrap_stream {
 #define Zstream_val(v) (((struct wrap_stream *)(Data_custom_val(v)))->z_stream)
 #define State(v) (((struct wrap_stream *)(Data_custom_val(v)))->state)
 
-static value *zlib_error_exn = NULL;
+static const value *zlib_error_exn = NULL;
 
 static void git_zlib_error(char *fn, value zstream, int ret_code) {
   if (ret_code == Z_OK) {
@@ -67,8 +67,8 @@ static void git_zlib_error(char *fn, value zstream, int ret_code) {
     }
   }
   Begin_roots3(s1, s2, bucket);
-  s1 = copy_string(fn);
-  s2 = copy_string(msg);
+  s1 = caml_copy_string(fn);
+  s2 = caml_copy_string(msg);
   bucket = caml_alloc_small(4, 0);
   Field(bucket, 0) = *zlib_error_exn;
   Field(bucket, 1) = s1;
