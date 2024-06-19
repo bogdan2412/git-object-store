@@ -596,6 +596,17 @@ let%expect_test "write unknown_size blob" =
     Deferred.unit)
 ;;
 
+let compare_hex_dump here ~expected_contents contents =
+  [%test_result: string]
+    ~here:[ here ]
+    ~expect:
+      (String.strip expected_contents
+       |> String.split_lines
+       |> List.map ~f:String.strip
+       |> String.concat ~sep:"\n")
+    (String.Hexdump.to_string_hum contents)
+;;
+
 let%expect_test "write commit" =
   Expect_test_helpers_async.with_temp_dir (fun object_directory ->
     Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
@@ -608,10 +619,62 @@ let%expect_test "write commit" =
         (object_directory ^/ "36") ^/ "78df8b9ac798bf8a19b6477254b0ca24a20954"
       in
       let%bind contents = Reader.file_contents expected_file_path in
-      printf "%S" contents;
-      [%expect
-        {x|
-        "x\156\213\145Oo\2120\016\1979\251S\204\173\007\148j\236\248/B\b\n\171\168\007V\171\210V\\\199\246$\r\"\201*\241V\240\237Iv\133\184p\162'\222\197\158\241\232\1677\207i\026\134\190\128\175\241U\153\153A1\163\213Z\213u\180\174\141\129}\157Ig-}\157\1785\140\206\146\148\210\136#\205<\022\208\182\149\142Z\231\016m\2102!+4\198R\208\129\200\181I\147\212\1453\254\158\167\016\165\n+O\183)\234l\130\229H\206G\239\144e\235<F\139\017\131\020t*O\211\0127S\151i\172>\206\253Rz\026\225\158\n\205S\127\130\183\241\252\242\158\127\208p\252\206\215i\026\222\1294\186v&\232ZC\133\006Q\164\243z\133_\012\2261M\185\031;\232\151\169\242\222\132\202\139\129\231\142\011u0\197o\156\n\180\025\163Z\189oKY\029Z\155H\027%\149U\169&L\148#f\212\138\005\148\159G\134\139\183\181X\t\207\133\151\203\181\251\023\175\174\014\202(\007\175q\149\128\021\180\2266\154\232\142\221\210wPm\186\2175\183{84\007\248r\219\236?\220?\220\237\206}\001\143</\2534\190\129f<\029\026x\150\215z\163|}\161\254+\194\159Aq\137k\183\255\244\183\176\196\231\237\219!\2064\166'\184\186\156W\226\023\025\189\004b" |x}];
+      let expected_contents =
+        match Zlib.For_testing.using_zlib_ng with
+        | true ->
+          {|
+            00000000  78 9c d5 91 c1 6e d4 40  0c 86 39 cf 53 f8 d6 03  |x....n.@..9.S...|
+            00000010  4a e5 99 78 66 32 08 21  28 ac a2 1e 58 ad 4a a9  |J..xf2.!(...X.J.|
+            00000020  7a f5 cc 38 69 10 49 56  c9 6c 05 6f 8f b2 2b c4  |z..8i.IV.l.o..+.|
+            00000030  85 13 3d e1 8b 2d fb d7  a7 df 76 9a c7 71 28 d0  |..=..-....v..q(.|
+            00000040  d4 f8 aa 2c 22 60 44 d0  11 99 ba 8e ce 77 31 48  |...,"`D......w1H|
+            00000050  53 67 a6 4c ba a9 53 76  56 d0 3b d6 5a 5b 75 e4  |Sg.L..SvV.;.Z[u.|
+            00000060  45 a6 02 e4 3a ed b9 f3  1e d1 25 d2 09 c5 a0 b5  |E...:.....%.....|
+            00000070  8e 03 05 66 df 25 62 4d  51 32 fe d6 73 88 da 84  |...f.%bMQ2..s...|
+            00000080  4c 9a ba 14 29 db e0 24  b2 6f 62 e3 51 74 e7 1b  |L...)..$.ob.Qt..|
+            00000090  8c 0e 23 06 ad f8 54 9e  e6 05 6e e6 3e f3 54 7d  |..#...T...n.>.T}|
+            000000a0  5c 86 b5 0c 3c c1 3d 17  5e e6 e1 04 6f e3 79 f2  |\...<.=.^...o.y.|
+            000000b0  5e 7e f0 78 fc 2e d7 69  1e df 81 b6 54 7b 1b a8  |^~.x...i....T{..|
+            000000c0  26 a8 d0 22 aa 74 5e af  c8 8b 41 32 a5 39 0f 53  |&..".t^...A2.9.S|
+            000000d0  0f c3 3a 57 4d 63 43 d5  a8 51 96 5e 0a f7 30 c7  |..:WMcC..Q.^..0.|
+            000000e0  6f 92 0a 74 19 a3 c1 a0  b7 a5 1c 85 ce 25 26 6b  |o..t.........%&k|
+            000000f0  b4 71 26 d5 8c 89 73 c4  8c 64 44 41 f9 79 14 b8  |.q&...s..dDA.y..|
+            00000100  78 53 b0 11 9e 8b ac 97  b2 ff 17 af be 0e c6 1a  |xS..............|
+            00000110  0f af 11 11 15 28 d8 70  1b 4d f5 c7 7e 1d 7a a8  |.....(.p.M..~.z.|
+            00000120  b6 b8 d9 b5 b7 7b 38 b4  07 f8 72 db ee 3f dc 7f  |.....{8...r..?..|
+            00000130  bd db 9d fb 0a 1e 64 59  87 79 7a 03 ed 74 3a b4  |......dY.yz..t:.|
+            00000140  f0 ac af 69 a3 3c be 30  fe 2b c2 1f a1 ba 9c 6b  |...i.<.0.+.....k|
+            00000150  b7 ff f4 b7 63 a9 cf db  db 21 2e 3c a5 27 b8 ba  |....c....!.<.'..|
+            00000160  e4 2b f5 0b 19 bd 04 62                           |.+.....b|
+          |}
+        | false ->
+          {x|
+            00000000  78 9c d5 91 4f 6f d4 30  10 c5 39 fb 53 cc ad 07  |x...Oo.0..9.S...|
+            00000010  94 6a ec f8 2f 42 08 0a  ab a8 07 56 ab d2 56 5c  |.j../B.....V..V\|
+            00000020  c7 f6 24 0d 22 c9 2a f1  56 f0 ed 49 76 85 b8 70  |..$.".*.V..Iv..p|
+            00000030  a2 27 de c5 9e f1 e8 a7  37 cf 69 1a 86 be 80 af  |.'......7.i.....|
+            00000040  f1 55 99 99 41 31 a3 d5  5a d5 75 b4 ae 8d 81 7d  |.U..A1..Z.u....}|
+            00000050  9d 49 67 2d 7d 9d b2 35  8c ce 92 94 d2 88 23 cd  |.Ig-}..5......#.|
+            00000060  3c 16 d0 b6 95 8e 5a e7  10 6d d2 32 21 2b 34 c6  |<.....Z..m.2!+4.|
+            00000070  52 d0 81 c8 b5 49 93 d4  91 33 fe 9e a7 10 a5 0a  |R....I...3......|
+            00000080  2b 4f b7 29 ea 6c 82 e5  48 ce 47 ef 90 65 eb 3c  |+O.).l..H.G..e.<|
+            00000090  46 8b 11 83 14 74 2a 4f  d3 0c 37 53 97 69 ac 3e  |F....t*O..7S.i.>|
+            000000a0  ce fd 52 7a 1a e1 9e 0a  cd 53 7f 82 b7 f1 fc f2  |..Rz.....S......|
+            000000b0  9e 7f d0 70 fc ce d7 69  1a de 81 34 ba 76 26 e8  |...p...i...4.v&.|
+            000000c0  5a 43 85 06 51 a4 f3 7a  85 5f 0c e2 31 4d b9 1f  |ZC..Q..z._..1M..|
+            000000d0  3b e8 97 a9 f2 de 84 ca  8b 81 e7 8e 0b 75 30 c5  |;............u0.|
+            000000e0  6f 9c 0a b4 19 a3 5a bd  6f 4b 59 1d 5a 9b 48 1b  |o.....Z.oKY.Z.H.|
+            000000f0  25 95 55 a9 26 4c 94 23  66 d4 8a 05 94 9f 47 86  |%.U.&L.#f.....G.|
+            00000100  8b b7 b5 58 09 cf 85 97  cb b5 fb 17 af ae 0e ca  |...X............|
+            00000110  28 07 af 71 95 80 15 b4  e2 36 9a e8 8e dd d2 77  |(..q.....6.....w|
+            00000120  50 6d ba d9 35 b7 7b 38  34 07 f8 72 db ec 3f dc  |Pm..5.{84..r..?.|
+            00000130  3f dc ed ce 7d 01 8f 3c  2f fd 34 be 81 66 3c 1d  |?...}..</.4..f<.|
+            00000140  1a 78 96 d7 7a a3 7c 7d  a1 fe 2b c2 9f 41 71 89  |.x..z.|}..+..Aq.|
+            00000150  6b b7 ff f4 b7 b0 c4 e7  ed db 21 ce 34 a6 27 b8  |k.........!.4.'.|
+            00000160  ba 9c 57 e2 17 19 bd 04  62                       |..W.....b|
+          |x}
+      in
+      compare_hex_dump [%here] ~expected_contents contents;
       let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
       [%expect
         {|
@@ -674,10 +737,34 @@ let%expect_test "write commit" =
         (object_directory ^/ "d2") ^/ "ef8c710416f38bdf6e8487630486830edc6c7f"
       in
       let%bind contents = Reader.file_contents expected_file_path in
-      printf "%S" contents;
-      [%expect
-        {|
-        "x\156\165\141Q\n\002!\016@\251\246\020\243\031\133\186j,DD]\161\011\204\232XB\174\225\206B\199/\182#\244~\031\188\023[\173E\192j\187\145\206\0124\140\t9b\030):\237\0193\030l\206.EJ\158\200\132`\006&\147\021.\242h\029.\237\158p\218]{\153\165\224\0047\020\236\173,p\164\213\156\249\141\245\245\228}l\245\004\198\187\016Fc\181\131\173\254\162\226\186\023\254;\164\132g\129_N}\000-iD\192" |}];
+      let expected_contents =
+        match Zlib.For_testing.using_zlib_ng with
+        | true ->
+          {|
+            00000000  78 9c a5 cd 41 0a 02 31  0c 40 51 d7 3d 45 f6 a2  |x...A..1.@Q.=E..|
+            00000010  a4 9d 4e 65 40 44 f4 0a  5e 20 69 53 2d d8 a9 74  |..Ne@D..^ iS-..t|
+            00000020  32 e0 f1 05 3d 82 eb 0f  ef c7 56 6b 51 70 e8 36  |2...=.....VkQp.6|
+            00000030  da 45 80 87 29 91 44 ca  13 47 8f 63 12 a1 83 cb  |.E..).D..G.c....|
+            00000040  d9 a7 c8 69 64 b6 21 d8  41 d8 66 43 ab 3e 5a 87  |...id.!.A.fC.>Z.|
+            00000050  4b bb 27 9a 77 d7 5e 16  2d 34 c3 8d 94 7a 2b 2b  |K.'.w.^.-4...z++|
+            00000060  1c f9 5b ce f2 a6 fa 7a  ca 3e b6 7a 02 3b fa 10  |..[....z.>.z.;..|
+            00000070  26 eb d0 c3 16 11 d1 c4  ef 5e e5 6f c8 a8 2c 0a  |&........^.o..,.|
+            00000080  3f ce 7c 00 2d 69 44 c0                           |?.|.-iD.|
+          |}
+        | false ->
+          {|
+            00000000  78 9c a5 8d 51 0a 02 21  10 40 fb f6 14 f3 1f 85  |x...Q..!.@......|
+            00000010  ba 6a 2c 44 44 5d a1 0b  cc e8 58 42 ae e1 ce 42  |.j,DD]....XB...B|
+            00000020  c7 2f b6 23 f4 7e 1f bc  17 5b ad 45 c0 6a bb 91  |./.#.~...[.E.j..|
+            00000030  ce 0c 34 8c 09 39 62 1e  29 3a ed 13 33 1e 6c ce  |..4..9b.):..3.l.|
+            00000040  2e 45 4a 9e c8 84 60 06  26 93 15 2e f2 68 1d 2e  |.EJ...`.&....h..|
+            00000050  ed 9e 70 da 5d 7b 99 a5  e0 04 37 14 ec ad 2c 70  |..p.]{....7...,p|
+            00000060  a4 d5 9c f9 8d f5 f5 e4  7d 6c f5 04 c6 bb 10 46  |........}l.....F|
+            00000070  63 b5 83 ad fe a2 e2 ba  17 fe 3b a4 84 67 81 5f  |c.........;..g._|
+            00000080  4e 7d 00 2d 69 44 c0                              |N}.-iD.|
+          |}
+      in
+      compare_hex_dump [%here] ~expected_contents contents;
       let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
       [%expect
         {|
@@ -725,10 +812,32 @@ let%expect_test "write tree" =
       (object_directory ^/ "b3") ^/ "9daecaf9bc405deea72ff4dcbd5bb16613eb1f"
     in
     let%bind contents = Reader.file_contents expected_file_path in
-    printf "%S" contents;
-    [%expect
-      {|
-      "x\156+)JMU044e040031QHd0\176\255\217x\164c\135\2086\197\248\218\237\147x\223n\222:w\022T2\137A&\210\169\234\142\183B\148:o\127#\179\128\165g\210\243Y\221&\006@\160\144\204pa\147{nT\254\241=o\253\243~8n\127\206\164\191\150e\178\161\017X2\133!c\239\235\213\203\191H\253_\184j\207\211\224\2273$f86\174\004\000\224\02714" |}];
+    let expected_contents =
+      match Zlib.For_testing.using_zlib_ng with
+      | true ->
+        {|
+          00000000  78 9c 2b 29 4a 4d 55 30  34 34 65 30 34 30 30 33  |x.+)JMU044e04003|
+          00000010  31 51 48 64 30 b0 ff d9  78 a4 63 87 d0 36 c5 f8  |1QHd0...x.c..6..|
+          00000020  da ed 93 78 df 6e de 3a  77 16 54 32 89 41 26 d2  |...x.n.:w.T2.A&.|
+          00000030  a9 ea 8e b7 42 94 3a 6f  7f 23 b3 80 a5 67 d2 f3  |....B.:o.#...g..|
+          00000040  59 dd 26 06 06 06 06 0a  c9 0c 17 36 b9 e7 46 e5  |Y.&........6..F.|
+          00000050  1f df f3 d6 3f ef 87 e3  f6 e7 4c fa 6b 59 26 1b  |....?.....L.kY&.|
+          00000060  1a 81 25 53 18 32 f6 be  5e bd fc 8b d4 ff 85 ab  |..%S.2..^.......|
+          00000070  f6 3c 0d 3e 3e 43 62 86  63 e3 4a 00 e0 1b 31 34  |.<.>>Cb.c.J...14|
+        |}
+      | false ->
+        {|
+          00000000  78 9c 2b 29 4a 4d 55 30  34 34 65 30 34 30 30 33  |x.+)JMU044e04003|
+          00000010  31 51 48 64 30 b0 ff d9  78 a4 63 87 d0 36 c5 f8  |1QHd0...x.c..6..|
+          00000020  da ed 93 78 df 6e de 3a  77 16 54 32 89 41 26 d2  |...x.n.:w.T2.A&.|
+          00000030  a9 ea 8e b7 42 94 3a 6f  7f 23 b3 80 a5 67 d2 f3  |....B.:o.#...g..|
+          00000040  59 dd 26 06 40 a0 90 cc  70 61 93 7b 6e 54 fe f1  |Y.&.@...pa.{nT..|
+          00000050  3d 6f fd f3 7e 38 6e 7f  ce a4 bf 96 65 b2 a1 11  |=o..~8n.....e...|
+          00000060  58 32 85 21 63 ef eb d5  cb bf 48 fd 5f b8 6a cf  |X2.!c.....H._.j.|
+          00000070  d3 e0 e3 33 24 66 38 36  ae 04 00 e0 1b 31 34     |...3$f86.....14|
+        |}
+    in
+    compare_hex_dump [%here] ~expected_contents contents;
     let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
     [%expect
       {|
@@ -772,10 +881,34 @@ let%expect_test "write tag" =
         (object_directory ^/ "ac") ^/ "5f368017e73cac599c7dfd77bd36da2b816eaf"
       in
       let%bind contents = Reader.file_contents expected_file_path in
-      printf "%S" contents;
-      [%expect
-        {|
-        "x\156\029\205Q\n\1940\016\004P\191s\138\253\023e\155&)\001\017\209+x\129M\178-\017\219\148v\021\189\189\177\24350\240Fh\128\198\226\174\132\007G\129>a\208\232\027\235\029;\227{\023\201X\221h\167cK\024)\005Lh4+\249\206\012\177\140c\022%\213x\011\175[\027x\129k\025\018M\135\219\146W\2014\193\157\132\150\146_p\n\219r\225\015\141\243\147\143\0218\215{\211\181^[\221\193\030k\148\250[P-\245\003@\1421G" |}];
+      let expected_contents =
+        match Zlib.For_testing.using_zlib_ng with
+        | true ->
+          {|
+            00000000  78 9c 1d cc 41 0a c2 30  10 40 51 d7 39 c5 ec 45  |x...A..0.@Q.9..E|
+            00000010  99 a4 49 4a 41 44 f4 0a  5e 60 92 4c 43 c4 34 a5  |..IJAD..^`.LC.4.|
+            00000020  1d 45 6f 2f 76 f7 e1 c1  17 ca a0 1d ee 5a 78 70  |.Eo/v........Zxp|
+            00000030  14 18 13 06 83 83 76 83  67 6f 87 d1 47 b2 ce 68  |......v.go..G..h|
+            00000040  e3 4d ec 08 23 a5 80 09  ad 61 25 df 99 21 b6 5a  |.M..#....a%..!.Z|
+            00000050  8b 28 a1 0c 6f e1 75 ab  cc 0b 5c 5b 4e 34 1d 6e  |.(..o.u...\[N4.n|
+            00000060  4b 59 a5 d0 04 77 12 5a  5a 79 c1 29 6c 72 e1 0f  |KY...w.ZZy.)lr..|
+            00000070  d5 f9 c9 c7 d8 ea 19 b4  b3 7d 37 18 67 7a d8 23  |.........}7.gz.#|
+            00000080  22 2a f5 7f 81 50 56 3f  40 8e 31 47              |"*...PV?@.1G|
+          |}
+        | false ->
+          {|
+            00000000  78 9c 1d cd 51 0a c2 30  10 04 50 bf 73 8a fd 17  |x...Q..0..P.s...|
+            00000010  65 9b 26 29 01 11 d1 2b  78 81 4d b2 2d 11 db 94  |e.&)...+x.M.-...|
+            00000020  76 15 bd bd b1 f3 35 30  f0 46 68 80 c6 e2 ae 84  |v.....50.Fh.....|
+            00000030  07 47 81 3e 61 d0 e8 1b  eb 1d 3b e3 7b 17 c9 58  |.G.>a.....;.{..X|
+            00000040  dd 68 a7 63 4b 18 29 05  4c 68 34 2b f9 ce 0c b1  |.h.cK.).Lh4+....|
+            00000050  8c 63 16 25 d5 78 0b af  5b 1b 78 81 6b 19 12 4d  |.c.%.x..[.x.k..M|
+            00000060  87 db 92 57 c9 34 c1 9d  84 96 92 5f 70 0a db 72  |...W.4....._p..r|
+            00000070  e1 0f 8d f3 93 8f 15 38  d7 7b d3 b5 5e 5b dd c1  |.......8.{..^[..|
+            00000080  1e 6b 94 fa 5b 50 2d f5  03 40 8e 31 47           |.k..[P-..@.1G|
+          |}
+      in
+      compare_hex_dump [%here] ~expected_contents contents;
       let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
       [%expect
         {|
@@ -809,10 +942,36 @@ let%expect_test "write tag" =
         (object_directory ^/ "5c") ^/ "ddf48d3977bd7688e0fdaf8a307cc9e99ba238"
       in
       let%bind contents = Reader.file_contents expected_file_path in
-      printf "%S" contents;
-      [%expect
-        {|
-        "x\156\029\141Q\n\1310\016D\251\157S\236\127\177$&Q\003\165\148\246\n\189\192&\174\193\162F\226\022\218\219\21580\012\195\192\027\198\b\202\186S\242o\n\012\161v\157\r\026\165\014\253`z\175\141m\021\213\173r\131\209\2225V\161\237\154 \005\255V\002\198(v\151\172\1526.%R\134G\138=.\2133\143\027\143\184\192\011\025s\026?p\245\199r\167/\206\235D\151\144\230\219~oZ\221\213F\0268\203]B\020V\129B\026\000\143\151?\209{3z" |}];
+      let expected_contents =
+        match Zlib.For_testing.using_zlib_ng with
+        | true ->
+          {|
+            00000000  78 9c 1d 8d 41 0a 83 30  10 45 bb ce 29 66 5f 2c  |x...A..0.E..)f_,|
+            00000010  13 93 a8 81 52 4a 7b 85  5e 60 12 c7 60 51 23 3a  |....RJ{.^`..`Q#:|
+            00000020  85 f6 f6 25 ae 3e 8f 07  ef 0b 25 d0 ce 9f 72 78  |...%.>....%...rx|
+            00000030  73 14 88 b5 ef 5c 34 84  26 f6 83 ed 83 b1 ae d5  |s....\4.&.......|
+            00000040  5c b7 da 0f d6 04 df 38  4d ae 6b 22 2a f9 ad 0c  |\......8M.k"*...|
+            00000050  42 49 09 a5 b2 95 f0 2e  05 12 6f f0 c8 a9 a7 a5  |BI........o.....|
+            00000060  7a 6e e3 2e 23 2d f0 22  a1 2d 8f 1f b8 86 c3 dc  |zn..#-.".-......|
+            00000070  f9 4b f3 3a f1 25 e6 f9  06 da d9 d6 74 b5 45 0b  |.K.:.%......t.E.|
+            00000080  67 44 44 a5 4a ab 44 21  0f 40 c7 cb 1f d1 7b 33  |gDD.J.D!.@....{3|
+            00000090  7a                                                |z|
+          |}
+        | false ->
+          {|
+            00000000  78 9c 1d 8d 51 0a 83 30  10 44 fb 9d 53 ec 7f b1  |x...Q..0.D..S...|
+            00000010  24 26 51 03 a5 94 f6 0a  bd c0 26 ae c1 a2 46 e2  |$&Q.......&...F.|
+            00000020  16 da db d7 38 30 0c c3  c0 1b c6 08 ca ba 53 f2  |....80........S.|
+            00000030  6f 0a 0c a1 76 9d 0d 1a  a5 0e fd 60 7a af 8d 6d  |o...v......`z..m|
+            00000040  15 d5 ad 72 83 d1 de 35  56 a1 ed 9a 20 05 ff 56  |...r...5V... ..V|
+            00000050  02 c6 28 76 97 ac 98 36  2e 25 52 86 47 8a 3d 2e  |..(v...6.%R.G.=.|
+            00000060  d5 33 8f 1b 8f b8 c0 0b  19 73 1a 3f 70 f5 c7 72  |.3.......s.?p..r|
+            00000070  a7 2f ce eb 44 97 90 e6  db 7e 6f 5a dd d5 46 1a  |./..D....~oZ..F.|
+            00000080  38 cb 5d 42 14 56 81 42  1a 00 8f 97 3f d1 7b 33  |8.]B.V.B....?.{3|
+            00000090  7a                                                |z|
+          |}
+      in
+      compare_hex_dump [%here] ~expected_contents contents;
       let%bind () = Object_reader.read_file reader ~file:expected_file_path () in
       [%expect
         {|

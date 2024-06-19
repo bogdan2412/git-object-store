@@ -458,7 +458,7 @@ module For_testing = struct
         Reverse_index_reader.index_of_pack_file_offset reverse_index ~pack_file_offset
       in
       printf
-        "%4d %2d %2d | %2d %2d | %16d \n"
+        "%4d %2d %2d | %2d %2d | %16d\n"
         pack_order
         pack_order_index_round_trip
         pack_order_offset_round_trip

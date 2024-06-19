@@ -16,6 +16,7 @@
    along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 
 #include <errno.h>
+#include <stdbool.h>
 #include <string.h>
 
 #include <caml/alloc.h>
@@ -217,4 +218,12 @@ value git_zlib_deflate_process(value zstream, value src, value src_pos,
 value git_zlib_deflate_process_bytecode(value *arg, int nargs) {
   return git_zlib_deflate_process(arg[0], arg[1], arg[2], arg[3], arg[4],
                                   arg[5], arg[6], arg[7]);
+}
+
+value git_zlib_using_zlib_ng() {
+#ifdef ZLIBNG_VERNUM
+  return Val_bool(true);
+#else
+  return Val_bool(false);
+#endif
 }

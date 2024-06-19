@@ -292,25 +292,67 @@ let%expect_test "write simple pack" =
           "b39daecaf9bc405deea72ff4dcbd5bb16613eb1f"
       in
       let%bind pack_file = finalise_exn t in
-      printf "%s\n" (Filename.basename pack_file);
-      [%expect {| pack-b883b23ef64c73bd5909caf3596129cb0816f07d.pack |}];
+      let pack_file_name = Filename.basename pack_file in
+      let expected_pack_file_name =
+        match Zlib.For_testing.using_zlib_ng with
+        | true -> "pack-00cbb1cf48d3eb98709af13f6b8fba955a0fae56.pack"
+        | false -> "pack-b883b23ef64c73bd5909caf3596129cb0816f07d.pack"
+      in
+      [%test_result: string] ~expect:expected_pack_file_name pack_file_name;
       let%bind () = Pack_reader.For_testing.print_out_pack_file pack_file in
+      let output = [%expect.output] in
+      let expected_summary =
+        match Zlib.For_testing.using_zlib_ng with
+        | true ->
+          {|
+            items in pack: 5
+            idx |                                     sha1 | pack file offset | object length | object type
+              0 | 1c59427adc4b205a270d8f810310394962e79a8b |              300 |            12 | Blob
+              1 | 303ff981c488b812b6215f7db7920dedb3b59d9a |              280 |            11 | Blob
+              2 | ac5f368017e73cac599c7dfd77bd36da2b816eaf |               12 |           150 | Tag
+              3 | b39daecaf9bc405deea72ff4dcbd5bb16613eb1f |              321 |           115 | Tree
+              4 | d2ef8c710416f38bdf6e8487630486830edc6c7f |              149 |           202 | Commit
+            pack order | index | pack file offset
+               0  0  0 |  2  2 |               12
+               1  1  1 |  4  4 |              149
+               2  2  2 |  1  1 |              280
+               3  3  3 |  0  0 |              300
+               4  4  4 |  3  3 |              321 |}
+        | false ->
+          {|
+            items in pack: 5
+            idx |                                     sha1 | pack file offset | object length | object type
+              0 | 1c59427adc4b205a270d8f810310394962e79a8b |              300 |            12 | Blob
+              1 | 303ff981c488b812b6215f7db7920dedb3b59d9a |              280 |            11 | Blob
+              2 | ac5f368017e73cac599c7dfd77bd36da2b816eaf |               12 |           150 | Tag
+              3 | b39daecaf9bc405deea72ff4dcbd5bb16613eb1f |              321 |           115 | Tree
+              4 | d2ef8c710416f38bdf6e8487630486830edc6c7f |              150 |           202 | Commit
+            pack order | index | pack file offset
+               0  0  0 |  2  2 |               12
+               1  1  1 |  4  4 |              150
+               2  2  2 |  1  1 |              280
+               3  3  3 |  0  0 |              300
+               4  4  4 |  3  3 |              321 |}
+      in
+      let expected_summary =
+        let expected_summary =
+          String.lstrip ~drop:(Char.( = ) '\n') (String.rstrip expected_summary)
+        in
+        let leading_space_count =
+          String.length expected_summary - String.length (String.lstrip expected_summary)
+        in
+        let leading_spaces = String.init leading_space_count ~f:(Fn.const ' ') in
+        String.split_lines expected_summary
+        |> List.map ~f:(String.chop_prefix_exn ~prefix:leading_spaces)
+        |> String.concat ~sep:"\n"
+        |> Fn.flip String.append "\n"
+      in
+      [%test_result: string]
+        ~expect:expected_summary
+        (String.sub output ~pos:0 ~len:(String.length expected_summary));
+      print_string (String.subo output ~pos:(String.length expected_summary));
       [%expect
         {|
-        items in pack: 5
-        idx |                                     sha1 | pack file offset | object length | object type
-          0 | 1c59427adc4b205a270d8f810310394962e79a8b |              300 |            12 | Blob
-          1 | 303ff981c488b812b6215f7db7920dedb3b59d9a |              280 |            11 | Blob
-          2 | ac5f368017e73cac599c7dfd77bd36da2b816eaf |               12 |           150 | Tag
-          3 | b39daecaf9bc405deea72ff4dcbd5bb16613eb1f |              321 |           115 | Tree
-          4 | d2ef8c710416f38bdf6e8487630486830edc6c7f |              150 |           202 | Commit
-        pack order | index | pack file offset
-           0  0  0 |  2  2 |               12
-           1  1  1 |  4  4 |              150
-           2  2  2 |  1  1 |              280
-           3  3  3 |  0  0 |              300
-           4  4  4 |  3  3 |              321
-
         1c59427adc4b205a270d8f810310394962e79a8b
         Header data: Blob size 12
         Blob size: 12

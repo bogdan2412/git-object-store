@@ -185,3 +185,9 @@ module Deflate = struct
     assert (consumed = len)
   ;;
 end
+
+module For_testing = struct
+  external using_zlib_ng : unit -> bool = "git_zlib_using_zlib_ng" [@@noalloc]
+
+  let using_zlib_ng = using_zlib_ng ()
+end
