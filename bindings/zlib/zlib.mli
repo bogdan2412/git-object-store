@@ -46,3 +46,7 @@ module Deflate : sig
       in. *)
   val finalise : t -> unit
 end
+
+module For_testing : sig
+  val using_zlib_ng : bool
+end
