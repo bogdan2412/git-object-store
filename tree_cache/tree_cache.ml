@@ -539,164 +539,153 @@ let remove_path t ~path =
 let is_persisted t = Node.is_persisted t.root
 let persist t = Node.persist t t.root
 
-let%test_module _ =
-  (module struct
-    let gen_sha1 seed =
-      String.init Sha1.Hex.length ~f:(fun (_ : int) ->
-        let value = Random.State.int seed 16 in
-        if value <= 9
-        then Char.of_int_exn (Char.to_int '0' + value)
-        else Char.of_int_exn (Char.to_int 'a' + value - 10))
-      |> Sha1.Hex.of_string
-    ;;
+module%test _ = struct
+  let gen_sha1 seed =
+    String.init Sha1.Hex.length ~f:(fun (_ : int) ->
+      let value = Random.State.int seed 16 in
+      if value <= 9
+      then Char.of_int_exn (Char.to_int '0' + value)
+      else Char.of_int_exn (Char.to_int 'a' + value - 10))
+    |> Sha1.Hex.of_string
+  ;;
 
-    let%expect_test "Empty tree SHA1" =
-      Expect_test_helpers_async.with_temp_dir (fun object_directory ->
-        let%bind object_store =
-          Object_store.Packed.create
-            ~object_directory
-            ~max_concurrent_reads:4
-            Validate_sha1
-          >>| ok_exn
-        in
-        let t = create object_store ~root:(Node.empty ()) in
-        let%bind sha1 = persist t in
-        print_s [%sexp (sha1 : Sha1.Hex.t)];
-        [%expect {| 4b825dc642cb6eb9a060e54bf8d69288fbee4904 |}];
-        [%test_result: Sha1.Hex.t] ~expect:Node.empty_node_sha1 sha1;
-        Deferred.unit)
-    ;;
+  let%expect_test "Empty tree SHA1" =
+    Expect_test_helpers_async.with_temp_dir (fun object_directory ->
+      let%bind object_store =
+        Object_store.Packed.create ~object_directory ~max_concurrent_reads:4 Validate_sha1
+        >>| ok_exn
+      in
+      let t = create object_store ~root:(Node.empty ()) in
+      let%bind sha1 = persist t in
+      print_s [%sexp (sha1 : Sha1.Hex.t)];
+      [%expect {| 4b825dc642cb6eb9a060e54bf8d69288fbee4904 |}];
+      [%test_result: Sha1.Hex.t] ~expect:Node.empty_node_sha1 sha1;
+      Deferred.unit)
+  ;;
 
-    let%expect_test "Randomised test" =
-      Expect_test_helpers_async.with_temp_dir (fun object_directory ->
-        let%bind object_store =
-          Object_store.Packed.create
-            ~object_directory
-            ~max_concurrent_reads:4
-            Validate_sha1
-          >>| ok_exn
+  let%expect_test "Randomised test" =
+    Expect_test_helpers_async.with_temp_dir (fun object_directory ->
+      let%bind object_store =
+        Object_store.Packed.create ~object_directory ~max_concurrent_reads:4 Validate_sha1
+        >>| ok_exn
+      in
+      let seed = Random.State.make [| 1337 |] in
+      let t = create object_store ~root:(Node.empty ()) in
+      let added = String.Table.create () in
+      let random_add t =
+        let length = Random.State.int seed 5 + 1 in
+        let path =
+          List.init length ~f:(fun index ->
+            let name =
+              String.init
+                (Random.State.int seed 2 + 1)
+                ~f:(fun (_ : int) ->
+                  Char.of_int_exn (Char.to_int 'a' + Random.State.int seed 3))
+            in
+            if index = length - 1 then "F" ^ name else "D" ^ name)
         in
-        let seed = Random.State.make [| 1337 |] in
-        let t = create object_store ~root:(Node.empty ()) in
-        let added = String.Table.create () in
-        let random_add t =
-          let length = Random.State.int seed 5 + 1 in
-          let path =
-            List.init length ~f:(fun index ->
-              let name =
-                String.init
-                  (Random.State.int seed 2 + 1)
-                  ~f:(fun (_ : int) ->
-                    Char.of_int_exn (Char.to_int 'a' + Random.State.int seed 3))
-              in
-              if index = length - 1 then "F" ^ name else "D" ^ name)
-          in
-          let sha1 = gen_sha1 seed in
-          let kind : File.Kind.t =
-            match Random.State.int seed 3 with
-            | 0 -> Regular_file
-            | 1 -> Executable_file
-            | 2 -> Link
-            | _ -> assert false
-          in
-          Hashtbl.set added ~key:(String.concat path ~sep:"/") ~data:{ File.sha1; kind };
-          add_file t ~path sha1 kind
+        let sha1 = gen_sha1 seed in
+        let kind : File.Kind.t =
+          match Random.State.int seed 3 with
+          | 0 -> Regular_file
+          | 1 -> Executable_file
+          | 2 -> Link
+          | _ -> assert false
         in
-        let rec random_adds t = function
-          | 0 -> Deferred.unit
-          | n ->
-            let%bind () = random_add t in
-            random_adds t (n - 1)
-        in
-        let random_remove t =
-          let index = Random.State.int seed (Hashtbl.length added) in
-          let key = List.nth_exn (Hashtbl.keys added) index in
-          let path = String.split ~on:'/' key in
-          Hashtbl.remove added key;
-          remove_path t ~path
-        in
-        let rec random_removes t = function
-          | 0 -> Deferred.unit
-          | n ->
-            let%bind () = random_remove t in
-            random_removes t (n - 1)
-        in
-        let%bind () = random_adds t 100 in
-        let%bind sha1 = persist t in
-        printf !"%{Sha1.Hex}" sha1;
-        [%expect {| 02e2ce6b94b54cfc4a1ca1b9b7e2bf9b26628ff7 |}];
-        let t = create object_store ~root:(Node.of_disk_hash sha1) in
-        let%bind () = random_adds t 100 in
-        let%bind sha1 = persist t in
-        printf !"%{Sha1.Hex}" sha1;
-        [%expect {| 402371cc128563c93d4add4e93145aa184f7086d |}];
-        let t = create object_store ~root:(Node.of_disk_hash sha1) in
-        let%bind () = random_adds t 100 in
-        let%bind sha1 = persist t in
-        printf !"%{Sha1.Hex}" sha1;
-        [%expect {| 5a3941929695b776327f7ff9ee0dcc9d6173d43b |}];
-        let%bind () = random_removes t 50 in
-        let%bind () = random_adds t 100 in
-        let%bind () = random_removes t 20 in
-        let%bind sha1 = persist t in
-        printf !"%{Sha1.Hex}" sha1;
-        [%expect {| 9fc3fbcc17e7ecb2fac140bf98fb21f2fdd6cc86 |}];
-        let%bind () =
-          Deferred.List.iter
-            (Hashtbl.to_alist added)
-            ~how:`Sequential
-            ~f:(fun (path, expected) ->
-              let path = String.split ~on:'/' path in
-              let%map result = get_file t ~path in
-              if not ([%compare.equal: File.t option] result (Some expected))
-              then
-                raise_s
-                  [%message
-                    "Path missing or incorrectly mapped"
-                      (path : string list)
-                      (expected : File.t)
-                      (result : File.t option)])
-        in
-        return ())
-    ;;
+        Hashtbl.set added ~key:(String.concat path ~sep:"/") ~data:{ File.sha1; kind };
+        add_file t ~path sha1 kind
+      in
+      let rec random_adds t = function
+        | 0 -> Deferred.unit
+        | n ->
+          let%bind () = random_add t in
+          random_adds t (n - 1)
+      in
+      let random_remove t =
+        let index = Random.State.int seed (Hashtbl.length added) in
+        let key = List.nth_exn (Hashtbl.keys added) index in
+        let path = String.split ~on:'/' key in
+        Hashtbl.remove added key;
+        remove_path t ~path
+      in
+      let rec random_removes t = function
+        | 0 -> Deferred.unit
+        | n ->
+          let%bind () = random_remove t in
+          random_removes t (n - 1)
+      in
+      let%bind () = random_adds t 100 in
+      let%bind sha1 = persist t in
+      printf !"%{Sha1.Hex}" sha1;
+      [%expect {| 02e2ce6b94b54cfc4a1ca1b9b7e2bf9b26628ff7 |}];
+      let t = create object_store ~root:(Node.of_disk_hash sha1) in
+      let%bind () = random_adds t 100 in
+      let%bind sha1 = persist t in
+      printf !"%{Sha1.Hex}" sha1;
+      [%expect {| 402371cc128563c93d4add4e93145aa184f7086d |}];
+      let t = create object_store ~root:(Node.of_disk_hash sha1) in
+      let%bind () = random_adds t 100 in
+      let%bind sha1 = persist t in
+      printf !"%{Sha1.Hex}" sha1;
+      [%expect {| 5a3941929695b776327f7ff9ee0dcc9d6173d43b |}];
+      let%bind () = random_removes t 50 in
+      let%bind () = random_adds t 100 in
+      let%bind () = random_removes t 20 in
+      let%bind sha1 = persist t in
+      printf !"%{Sha1.Hex}" sha1;
+      [%expect {| 9fc3fbcc17e7ecb2fac140bf98fb21f2fdd6cc86 |}];
+      let%bind () =
+        Deferred.List.iter
+          (Hashtbl.to_alist added)
+          ~how:`Sequential
+          ~f:(fun (path, expected) ->
+            let path = String.split ~on:'/' path in
+            let%map result = get_file t ~path in
+            if not ([%compare.equal: File.t option] result (Some expected))
+            then
+              raise_s
+                [%message
+                  "Path missing or incorrectly mapped"
+                    (path : string list)
+                    (expected : File.t)
+                    (result : File.t option)])
+      in
+      return ())
+  ;;
 
-    let%expect_test "is_persisted is maintained correctly" =
-      Expect_test_helpers_async.with_temp_dir (fun object_directory ->
-        let%bind object_store =
-          Object_store.Packed.create
-            ~object_directory
-            ~max_concurrent_reads:4
-            Validate_sha1
-          >>| ok_exn
-        in
-        let t = create object_store ~root:(Node.empty ()) in
-        let pr () = printf "is_persisted %b\n" (is_persisted t) in
-        let sha1_file = Sha1.Hex.of_string "62e79c807f27a8a3fbf315e252ea20720c9bc3f5" in
-        let%bind () = add_file t ~path:[ "a"; "a" ] sha1_file Regular_file in
-        pr ();
-        [%expect {| is_persisted false |}];
-        let%bind (_ : Sha1.Hex.t) = persist t in
-        pr ();
-        [%expect {| is_persisted true |}];
-        let%bind () = add_file t ~path:[ "a"; "a" ] sha1_file Regular_file in
-        pr ();
-        [%expect {| is_persisted true |}];
-        let%bind (_ : Sha1.Hex.t) = persist t in
-        let%bind () =
-          add_node
-            t
-            ~path:[ "a" ]
-            (Node.of_disk_hash
-               (Sha1.Hex.of_string "bb80b732a47e282685796d55bdf2034becf13ed7"))
-        in
-        pr ();
-        [%expect {| is_persisted true |}];
-        let%bind (_ : Sha1.Hex.t) = persist t in
-        let%bind () = remove_path t ~path:[ "b" ] in
-        pr ();
-        [%expect {| is_persisted true |}];
-        let%bind (_ : Sha1.Hex.t) = persist t in
-        return ())
-    ;;
-  end)
-;;
+  let%expect_test "is_persisted is maintained correctly" =
+    Expect_test_helpers_async.with_temp_dir (fun object_directory ->
+      let%bind object_store =
+        Object_store.Packed.create ~object_directory ~max_concurrent_reads:4 Validate_sha1
+        >>| ok_exn
+      in
+      let t = create object_store ~root:(Node.empty ()) in
+      let pr () = printf "is_persisted %b\n" (is_persisted t) in
+      let sha1_file = Sha1.Hex.of_string "62e79c807f27a8a3fbf315e252ea20720c9bc3f5" in
+      let%bind () = add_file t ~path:[ "a"; "a" ] sha1_file Regular_file in
+      pr ();
+      [%expect {| is_persisted false |}];
+      let%bind (_ : Sha1.Hex.t) = persist t in
+      pr ();
+      [%expect {| is_persisted true |}];
+      let%bind () = add_file t ~path:[ "a"; "a" ] sha1_file Regular_file in
+      pr ();
+      [%expect {| is_persisted true |}];
+      let%bind (_ : Sha1.Hex.t) = persist t in
+      let%bind () =
+        add_node
+          t
+          ~path:[ "a" ]
+          (Node.of_disk_hash
+             (Sha1.Hex.of_string "bb80b732a47e282685796d55bdf2034becf13ed7"))
+      in
+      pr ();
+      [%expect {| is_persisted true |}];
+      let%bind (_ : Sha1.Hex.t) = persist t in
+      let%bind () = remove_path t ~path:[ "b" ] in
+      pr ();
+      [%expect {| is_persisted true |}];
+      let%bind (_ : Sha1.Hex.t) = persist t in
+      return ())
+  ;;
+end

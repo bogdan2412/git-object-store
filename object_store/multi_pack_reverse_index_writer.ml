@@ -112,123 +112,120 @@ let write_multi_pack_reverse_index index ~preferred_pack =
     ~len:Sha1.Raw.length
 ;;
 
-let%test_module "Multi_pack_reverse_index_writer" =
-  (module struct
-    module Expect_test_time_zone = Git_core_types.Expect_test_time_zone
+module%test Multi_pack_reverse_index_writer = struct
+  module Expect_test_time_zone = Git_core_types.Expect_test_time_zone
 
-    let write_multi_pack_reverse_index ~pack_directory ~preferred_pack print =
-      let%bind () =
-        let%bind files = Sys.readdir pack_directory in
-        let old_rev_indexes =
-          Array.filter files ~f:(String.is_suffix ~suffix:".rev")
-          |> Array.filter ~f:(String.is_prefix ~prefix:"multi-pack-index-")
-          |> Array.map ~f:(fun file_name -> pack_directory ^/ file_name)
-        in
-        Deferred.Array.iter old_rev_indexes ~how:`Sequential ~f:Unix.unlink
+  let write_multi_pack_reverse_index ~pack_directory ~preferred_pack print =
+    let%bind () =
+      let%bind files = Sys.readdir pack_directory in
+      let old_rev_indexes =
+        Array.filter files ~f:(String.is_suffix ~suffix:".rev")
+        |> Array.filter ~f:(String.is_prefix ~prefix:"multi-pack-index-")
+        |> Array.map ~f:(fun file_name -> pack_directory ^/ file_name)
       in
-      let%bind multi_pack_index =
-        Multi_pack_index_reader.open_existing ~pack_directory >>| ok_exn
+      Deferred.Array.iter old_rev_indexes ~how:`Sequential ~f:Unix.unlink
+    in
+    let%bind multi_pack_index =
+      Multi_pack_index_reader.open_existing ~pack_directory >>| ok_exn
+    in
+    let%bind () = write_multi_pack_reverse_index multi_pack_index ~preferred_pack in
+    match print with
+    | `Raw_contents ->
+      let sha1 =
+        Sha1.Raw.Volatile.to_hex
+          (Multi_pack_index_reader.multi_pack_index_sha1 multi_pack_index)
       in
-      let%bind () = write_multi_pack_reverse_index multi_pack_index ~preferred_pack in
-      match print with
-      | `Raw_contents ->
-        let sha1 =
-          Sha1.Raw.Volatile.to_hex
-            (Multi_pack_index_reader.multi_pack_index_sha1 multi_pack_index)
+      let reverse_index_file = [%string "multi-pack-index-%{sha1#Sha1.Hex}.rev"] in
+      let%bind reverse_index_contents =
+        Reader.file_contents (pack_directory ^/ reverse_index_file)
+      in
+      printf "%S" reverse_index_contents;
+      Deferred.unit
+    | `Parsed ->
+      let%map reverse_index =
+        Multi_pack_reverse_index_reader.open_existing multi_pack_index >>| ok_exn
+      in
+      let object_count = Multi_pack_index_reader.object_count multi_pack_index in
+      printf "pseudo pack order | index | pack id | pack offset\n";
+      for pseudo_pack_order = 0 to object_count - 1 do
+        let index =
+          Multi_pack_reverse_index_reader.index_of_pseudo_pack_order
+            reverse_index
+            ~pseudo_pack_order
         in
-        let reverse_index_file = [%string "multi-pack-index-%{sha1#Sha1.Hex}.rev"] in
-        let%bind reverse_index_contents =
-          Reader.file_contents (pack_directory ^/ reverse_index_file)
+        let pack_id =
+          Multi_pack_reverse_index_reader.pack_id_of_pseudo_pack_order
+            reverse_index
+            ~pseudo_pack_order
         in
-        printf "%S" reverse_index_contents;
-        Deferred.unit
-      | `Parsed ->
-        let%map reverse_index =
-          Multi_pack_reverse_index_reader.open_existing multi_pack_index >>| ok_exn
+        let pack_offset =
+          Multi_pack_reverse_index_reader.pack_offset_of_pseudo_pack_order
+            reverse_index
+            ~pseudo_pack_order
         in
-        let object_count = Multi_pack_index_reader.object_count multi_pack_index in
-        printf "pseudo pack order | index | pack id | pack offset\n";
-        for pseudo_pack_order = 0 to object_count - 1 do
-          let index =
-            Multi_pack_reverse_index_reader.index_of_pseudo_pack_order
-              reverse_index
-              ~pseudo_pack_order
-          in
-          let pack_id =
-            Multi_pack_reverse_index_reader.pack_id_of_pseudo_pack_order
-              reverse_index
-              ~pseudo_pack_order
-          in
-          let pack_offset =
-            Multi_pack_reverse_index_reader.pack_offset_of_pseudo_pack_order
-              reverse_index
-              ~pseudo_pack_order
-          in
-          let pseudo_pack_order_index_round_trip =
-            Multi_pack_reverse_index_reader.pseudo_pack_order_of_index
-              reverse_index
-              ~index
-          in
-          let pseudo_pack_order_offset_round_trip =
-            Multi_pack_reverse_index_reader.pseudo_pack_order_of_pack_id_and_offset
-              reverse_index
-              ~pack_id
-              ~pack_offset
-          in
-          let index_offset_round_trip =
-            Multi_pack_reverse_index_reader.index_of_pack_id_and_offset
-              reverse_index
-              ~pack_id
-              ~pack_offset
-          in
-          printf
-            "%11d %2d %2d | %2d %2d | %7d | %11d \n"
-            pseudo_pack_order
-            pseudo_pack_order_index_round_trip
-            pseudo_pack_order_offset_round_trip
-            index
-            index_offset_round_trip
-            pack_id
-            pack_offset
-        done
-    ;;
+        let pseudo_pack_order_index_round_trip =
+          Multi_pack_reverse_index_reader.pseudo_pack_order_of_index reverse_index ~index
+        in
+        let pseudo_pack_order_offset_round_trip =
+          Multi_pack_reverse_index_reader.pseudo_pack_order_of_pack_id_and_offset
+            reverse_index
+            ~pack_id
+            ~pack_offset
+        in
+        let index_offset_round_trip =
+          Multi_pack_reverse_index_reader.index_of_pack_id_and_offset
+            reverse_index
+            ~pack_id
+            ~pack_offset
+        in
+        printf
+          "%11d %2d %2d | %2d %2d | %7d | %11d \n"
+          pseudo_pack_order
+          pseudo_pack_order_index_round_trip
+          pseudo_pack_order_offset_round_trip
+          index
+          index_offset_round_trip
+          pack_id
+          pack_offset
+      done
+  ;;
 
-    let%expect_test "" =
-      Expect_test_helpers_async.with_temp_dir (fun object_directory ->
-        Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
-          let pack_directory = object_directory ^/ "pack" in
-          let%bind packs =
-            Multi_pack_index_writer.For_testing.make_pack_files
-              ~object_directory
-              (let packs =
-                 Multi_pack_index_writer.For_testing.three_overlapping_packs_example
-               in
-               (* Make it such that the first pack lexicographically isn't also the oldest
-                  pack. *)
-               List.tl_exn packs @ [ List.hd_exn packs ])
-          in
-          let%bind () =
-            Multi_pack_index_writer.write_multi_pack_index_file
+  let%expect_test "" =
+    Expect_test_helpers_async.with_temp_dir (fun object_directory ->
+      Expect_test_time_zone.with_fixed_time_zone_async (fun () ->
+        let pack_directory = object_directory ^/ "pack" in
+        let%bind packs =
+          Multi_pack_index_writer.For_testing.make_pack_files
+            ~object_directory
+            (let packs =
+               Multi_pack_index_writer.For_testing.three_overlapping_packs_example
+             in
+             (* Make it such that the first pack lexicographically isn't also the oldest
+                pack. *)
+             List.tl_exn packs @ [ List.hd_exn packs ])
+        in
+        let%bind () =
+          Multi_pack_index_writer.write_multi_pack_index_file
+            ~pack_directory
+            ~preferred_pack:None
+        in
+        let packs = Array.of_list packs in
+        print_endline "packs by mtime order:";
+        Array.iter packs ~f:print_endline;
+        print_endline "";
+        let%bind () =
+          write_multi_pack_reverse_index ~pack_directory ~preferred_pack:None `Parsed
+        in
+        let%bind () =
+          Deferred.Array.iter packs ~how:`Sequential ~f:(fun preferred_pack ->
+            print_endline "";
+            write_multi_pack_reverse_index
               ~pack_directory
-              ~preferred_pack:None
-          in
-          let packs = Array.of_list packs in
-          print_endline "packs by mtime order:";
-          Array.iter packs ~f:print_endline;
-          print_endline "";
-          let%bind () =
-            write_multi_pack_reverse_index ~pack_directory ~preferred_pack:None `Parsed
-          in
-          let%bind () =
-            Deferred.Array.iter packs ~how:`Sequential ~f:(fun preferred_pack ->
-              print_endline "";
-              write_multi_pack_reverse_index
-                ~pack_directory
-                ~preferred_pack:(Some preferred_pack)
-                `Parsed)
-          in
-          [%expect
-            {|
+              ~preferred_pack:(Some preferred_pack)
+              `Parsed)
+        in
+        [%expect
+          {|
             packs by mtime order:
             pack-dfa729d1b4f4f638dcf554f804d034fe3a60b495.pack
             pack-bb8f3b6cbb5b4bd45f33bded1ffd1c249f573c3a.pack
@@ -281,39 +278,38 @@ let%test_module "Multi_pack_reverse_index_writer" =
                       7  7  7 |  3  3 |       1 |         110
                       8  8  8 |  5  5 |       2 |          12
                       9  9  9 |  4  4 |       2 |          66 |}];
-          let%bind () =
-            write_multi_pack_reverse_index
-              ~pack_directory
-              ~preferred_pack:None
-              `Raw_contents
-          in
-          [%expect
-            {| "RIDX\000\000\000\001\000\000\000\001\000\000\000\005\000\000\000\004\000\000\000\t\000\000\000\001\000\000\000\002\000\000\000\007\000\000\000\006\000\000\000\000\000\000\000\b\000\000\000\003\148\133\188\020\222\156\130\005_\241\191u0i\215$|\1671<5\180\254\236\228\255_\189x\177\015\149u\142F\238t4DQ" |}];
-          let%bind () =
-            write_multi_pack_reverse_index
-              ~pack_directory
-              ~preferred_pack:(Some packs.(0))
-              `Raw_contents
-          in
-          [%expect
-            {| "RIDX\000\000\000\001\000\000\000\001\000\000\000\005\000\000\000\004\000\000\000\t\000\000\000\001\000\000\000\002\000\000\000\007\000\000\000\006\000\000\000\000\000\000\000\b\000\000\000\003\148\133\188\020\222\156\130\005_\241\191u0i\215$|\1671<5\180\254\236\228\255_\189x\177\015\149u\142F\238t4DQ" |}];
-          let%bind () =
-            write_multi_pack_reverse_index
-              ~pack_directory
-              ~preferred_pack:(Some packs.(1))
-              `Raw_contents
-          in
-          [%expect
-            {| "RIDX\000\000\000\001\000\000\000\001\000\000\000\006\000\000\000\000\000\000\000\b\000\000\000\003\000\000\000\t\000\000\000\001\000\000\000\002\000\000\000\007\000\000\000\005\000\000\000\004\148\133\188\020\222\156\130\005_\241\191u0i\215$|\1671<\155N\t\214\148\021\231\222\241`F\175\200\191\206\130\217h\133o" |}];
-          let%bind () =
-            write_multi_pack_reverse_index
-              ~pack_directory
-              ~preferred_pack:(Some packs.(2))
-              `Raw_contents
-          in
-          [%expect
-            {| "RIDX\000\000\000\001\000\000\000\001\000\000\000\t\000\000\000\001\000\000\000\002\000\000\000\007\000\000\000\006\000\000\000\000\000\000\000\b\000\000\000\003\000\000\000\005\000\000\000\004\148\133\188\020\222\156\130\005_\241\191u0i\215$|\1671<\237D\212fQ\015(\163\206\134;b\226\007\003MV\019w\231" |}];
-          Deferred.unit))
-    ;;
-  end)
-;;
+        let%bind () =
+          write_multi_pack_reverse_index
+            ~pack_directory
+            ~preferred_pack:None
+            `Raw_contents
+        in
+        [%expect
+          {| "RIDX\000\000\000\001\000\000\000\001\000\000\000\005\000\000\000\004\000\000\000\t\000\000\000\001\000\000\000\002\000\000\000\007\000\000\000\006\000\000\000\000\000\000\000\b\000\000\000\003\148\133\188\020\222\156\130\005_\241\191u0i\215$|\1671<5\180\254\236\228\255_\189x\177\015\149u\142F\238t4DQ" |}];
+        let%bind () =
+          write_multi_pack_reverse_index
+            ~pack_directory
+            ~preferred_pack:(Some packs.(0))
+            `Raw_contents
+        in
+        [%expect
+          {| "RIDX\000\000\000\001\000\000\000\001\000\000\000\005\000\000\000\004\000\000\000\t\000\000\000\001\000\000\000\002\000\000\000\007\000\000\000\006\000\000\000\000\000\000\000\b\000\000\000\003\148\133\188\020\222\156\130\005_\241\191u0i\215$|\1671<5\180\254\236\228\255_\189x\177\015\149u\142F\238t4DQ" |}];
+        let%bind () =
+          write_multi_pack_reverse_index
+            ~pack_directory
+            ~preferred_pack:(Some packs.(1))
+            `Raw_contents
+        in
+        [%expect
+          {| "RIDX\000\000\000\001\000\000\000\001\000\000\000\006\000\000\000\000\000\000\000\b\000\000\000\003\000\000\000\t\000\000\000\001\000\000\000\002\000\000\000\007\000\000\000\005\000\000\000\004\148\133\188\020\222\156\130\005_\241\191u0i\215$|\1671<\155N\t\214\148\021\231\222\241`F\175\200\191\206\130\217h\133o" |}];
+        let%bind () =
+          write_multi_pack_reverse_index
+            ~pack_directory
+            ~preferred_pack:(Some packs.(2))
+            `Raw_contents
+        in
+        [%expect
+          {| "RIDX\000\000\000\001\000\000\000\001\000\000\000\t\000\000\000\001\000\000\000\002\000\000\000\007\000\000\000\006\000\000\000\000\000\000\000\b\000\000\000\003\000\000\000\005\000\000\000\004\148\133\188\020\222\156\130\005_\241\191u0i\215$|\1671<\237D\212fQ\015(\163\206\134;b\226\007\003MV\019w\231" |}];
+        Deferred.unit))
+  ;;
+end
