@@ -301,7 +301,7 @@ let rec dfs =
       ~len:(Delta_object_parser.result_len delta_object_parser);
     let sha1_compute = Sha1.Compute.finalise sha1_compute in
     let sha1_raw = Sha1.Raw.Volatile.non_volatile (Sha1.Compute.get_raw sha1_compute) in
-    Set_once.set_exn object_.sha1 [%here] sha1_raw;
+    Set_once.set_exn object_.sha1 sha1_raw;
     match object_.delta_children with
     | [] -> ()
     | children ->
@@ -339,7 +339,7 @@ let write_index_file ~index_file ~(objects_in_sha1_order : Object.t array) ~pack
   Bigstring.unsafe_set_uint32_be file_mmap ~pos:0 0xff744f63;
   Bigstring.unsafe_set_uint32_be file_mmap ~pos:4 2;
   Array.iter objects_in_sha1_order ~f:(fun object_ ->
-    let first_byte = (Sha1.Raw.to_string (Set_once.get_exn object_.sha1 [%here])).[0] in
+    let first_byte = (Sha1.Raw.to_string (Set_once.get_exn object_.sha1)).[0] in
     let pos = Index_offsets.fanout offsets first_byte in
     Bigstring.set_uint32_be_exn file_mmap ~pos (Bigstring.get_uint32_be file_mmap ~pos + 1));
   for idx = 1 to 255 do
@@ -353,7 +353,7 @@ let write_index_file ~index_file ~(objects_in_sha1_order : Object.t array) ~pack
   Array.iteri objects_in_sha1_order ~f:(fun idx object_ ->
     let pos = Index_offsets.sha1 offsets idx in
     Bigstring.From_string.blit
-      ~src:(Sha1.Raw.to_string (Set_once.get_exn object_.sha1 [%here]))
+      ~src:(Sha1.Raw.to_string (Set_once.get_exn object_.sha1))
       ~src_pos:0
       ~dst:file_mmap
       ~dst_pos:pos
@@ -411,7 +411,7 @@ let write_index ~pack_file ~pack_file_mmap ~items_in_pack =
     objects_in_sha1_order
     ~compare:
       (Comparable.lift Sha1.Raw.compare ~f:(fun object_ ->
-         Set_once.get_exn object_.Object.sha1 [%here]));
+         Set_once.get_exn object_.Object.sha1));
   let pack_sha1 =
     Sha1.Raw.of_string
       (Bigstring.To_string.sub

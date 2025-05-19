@@ -61,9 +61,9 @@ let init ~git_directory ~branch ~stat_accurate_timestamps ~max_concurrent_reads 
         Object_store.read_commit
           object_store
           commit_sha1
-          ~on_commit:(Set_once.set_exn commit [%here])
+          ~on_commit:(Set_once.set_exn commit)
       in
-      let commit = Set_once.get_exn commit [%here] in
+      let commit = Set_once.get_exn commit in
       let commit_timestamp = commit.author.timestamp in
       let uid = Unix.getuid () in
       let gid = Unix.getgid () in
@@ -99,7 +99,7 @@ let init ~git_directory ~branch ~stat_accurate_timestamps ~max_concurrent_reads 
     |> Or_error.of_exn_result
   in
   match t with
-  | Ok t -> Set_once.set_exn global_t [%here] t
+  | Ok t -> Set_once.set_exn global_t t
   | Error error ->
     Log.Global.error_s [%message "Error initializing object store" (error : Error.t)];
     Shutdown.shutdown 1
@@ -112,7 +112,7 @@ let split_path path =
 ;;
 
 let opendir path _flags =
-  let t = Set_once.get_exn global_t [%here] in
+  let t = Set_once.get_exn global_t in
   let split_path = split_path path in
   let node =
     Thread_safe.block_on_async_exn (fun () ->
@@ -125,7 +125,7 @@ let opendir path _flags =
 ;;
 
 let readdir _path handle =
-  let t = Set_once.get_exn global_t [%here] in
+  let t = Set_once.get_exn global_t in
   let node =
     Handle_manager.get t.tree_handles (Handle_manager.Handle.unsafe_of_int handle)
   in
@@ -139,7 +139,7 @@ let readdir _path handle =
 ;;
 
 let releasedir _path _flags handle =
-  let t = Set_once.get_exn global_t [%here] in
+  let t = Set_once.get_exn global_t in
   Handle_manager.release t.tree_handles (Handle_manager.Handle.unsafe_of_int handle)
 ;;
 
@@ -169,7 +169,7 @@ let stats t ~path sha1 kind perm =
 ;;
 
 let getattr path =
-  let t = Set_once.get_exn global_t [%here] in
+  let t = Set_once.get_exn global_t in
   let split_path = split_path path in
   Thread_safe.block_on_async_exn (fun () ->
     let%bind node = Tree_cache.get_node t.tree_cache ~path:split_path in
@@ -189,7 +189,7 @@ let getattr path =
 ;;
 
 let fopen path _flags =
-  let t = Set_once.get_exn global_t [%here] in
+  let t = Set_once.get_exn global_t in
   let split_path = split_path path in
   Thread_safe.block_on_async_exn (fun () ->
     let%bind file = Tree_cache.get_file t.tree_cache ~path:split_path in
@@ -227,7 +227,7 @@ let fopen path _flags =
 ;;
 
 let read _path buf file_offset handle =
-  let t = Set_once.get_exn global_t [%here] in
+  let t = Set_once.get_exn global_t in
   let handle = Handle_manager.Handle.unsafe_of_int handle in
   let reader = Handle_manager.get t.blob_handles handle |> Option.value_exn in
   let buf_length = Bigstring.length buf in
@@ -240,7 +240,7 @@ let read _path buf file_offset handle =
 ;;
 
 let release _path _flags handle =
-  let t = Set_once.get_exn global_t [%here] in
+  let t = Set_once.get_exn global_t in
   let handle = Handle_manager.Handle.unsafe_of_int handle in
   let reader = Handle_manager.get t.blob_handles handle |> Option.value_exn in
   Thread_safe.block_on_async_exn (fun () ->

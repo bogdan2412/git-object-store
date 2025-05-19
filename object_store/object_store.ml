@@ -564,23 +564,23 @@ let with_on_disk_file (type a) (t : a t) sha1 ~f =
          pack
          ~index
          ~on_header:(fun object_type ~size ->
-           Set_once.set_exn object_type_and_length [%here] (object_type, size))
+           Set_once.set_exn object_type_and_length (object_type, size))
          ~on_payload:(fun buf ~pos ~len ->
-           Set_once.set_exn data [%here] (Bigstring.sub buf ~pos ~len))
+           Set_once.set_exn data (Bigstring.sub buf ~pos ~len))
      | In_pack_file_at_offset { pack; offset } ->
        Pack_reader.Low_level.read_raw_object
          pack
          ~pack_offset:offset
          ~on_header:(fun object_type ~size ->
-           Set_once.set_exn object_type_and_length [%here] (object_type, size))
+           Set_once.set_exn object_type_and_length (object_type, size))
          ~on_payload:(fun buf ~pos ~len ->
-           Set_once.set_exn data [%here] (Bigstring.sub buf ~pos ~len))
+           Set_once.set_exn data (Bigstring.sub buf ~pos ~len))
          (match t.sha1_validation with
           | Do_not_validate_sha1 -> ()
           | Validate_sha1 -> sha1)
      | Unpacked_file_if_exists _ ->
        raise_s [%message "Object not found" (sha1 : Sha1.Hex.t)]);
-    let object_type, length = Set_once.get_exn object_type_and_length [%here] in
+    let object_type, length = Set_once.get_exn object_type_and_length in
     let writer =
       Object_writer.With_header.Known_size.create_uninitialised
         ~object_directory:t.object_directory
@@ -592,7 +592,7 @@ let with_on_disk_file (type a) (t : a t) sha1 ~f =
         ~length
         Object_writer.Mode.write_all
     in
-    let data = Set_once.get_exn data [%here] in
+    let data = Set_once.get_exn data in
     Object_writer.With_header.Known_size.append_data
       writer
       data

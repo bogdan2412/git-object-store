@@ -25,9 +25,9 @@ let read_commit_object object_store commit_sha1 =
     Object_store.Packed.read_commit
       object_store
       commit_sha1
-      ~on_commit:(Set_once.set_exn commit [%here])
+      ~on_commit:(Set_once.set_exn commit)
   in
-  Set_once.get_exn commit [%here]
+  Set_once.get_exn commit
 ;;
 
 module Timestamp_tree = struct
