@@ -27,7 +27,7 @@ module Hex : sig
   include Stringable.S with type t := t
 
   module Volatile : sig
-    type non_volatile
+    type non_volatile := t
     type t
 
     val create : unit -> t
@@ -38,7 +38,6 @@ module Hex : sig
     include Stringable.S with type t := t
     include Sexpable.S with type t := t
   end
-  with type non_volatile := t
 end
 
 module Raw : sig
@@ -56,7 +55,7 @@ module Raw : sig
   val to_hex_volatile : t -> Hex.Volatile.t -> unit
 
   module Volatile : sig
-    type non_volatile
+    type non_volatile := t
     type t
 
     val create : unit -> t
@@ -71,7 +70,6 @@ module Raw : sig
     val to_hex : t -> Hex.t
     val to_hex_volatile : t -> Hex.Volatile.t -> unit
   end
-  with type non_volatile := t
 end
 
 module Compute : sig

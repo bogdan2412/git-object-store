@@ -40,7 +40,7 @@ module File : sig
 end
 
 module Node : sig
-  type tree_cache
+  type tree_cache := t
   type _ state
   type t
 
@@ -70,12 +70,7 @@ module Node : sig
   val get_entry : tree_cache -> t -> path:string list -> Entry.t option Deferred.t
   val get_file : tree_cache -> t -> path:string list -> File.t option Deferred.t
   val get_node : tree_cache -> t -> path:string list -> t option Deferred.t
-
-  val get_submodule
-    :  tree_cache
-    -> t
-    -> path:string list
-    -> Sha1.Hex.t option Deferred.t
+  val get_submodule : tree_cache -> t -> path:string list -> Sha1.Hex.t option Deferred.t
 
   (** Mutation methods *)
 
@@ -98,7 +93,6 @@ module Node : sig
   val is_persisted : t -> bool
   val persist : tree_cache -> t -> Sha1.Hex.t Deferred.t
 end
-with type tree_cache := t
 
 (** Constructors *)
 

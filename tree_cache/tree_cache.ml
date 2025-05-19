@@ -140,9 +140,9 @@ let create object_store ~root =
       Write
         { should_discard =
             (fun sha1_raw ->
-               match Object_store.Packed.find_object' object_store sha1_raw with
-               | In_pack_file _ -> true
-               | Unpacked_file_if_exists _ -> false)
+              match Object_store.Packed.find_object' object_store sha1_raw with
+              | In_pack_file _ -> true
+              | Unpacked_file_if_exists _ -> false)
         }
   ; git_tree_writer_volatile_sha1_raw = Sha1.Raw.Volatile.create ()
   }
@@ -248,16 +248,15 @@ module Node = struct
         Map.map files ~f:(fun { sha1; kind } ->
           ( sha1
           , match kind with
-          | Regular_file -> Git_core_types.File_mode.Non_executable_file
-          | Executable_file -> Executable_file
-          | Link -> Link ))
+            | Regular_file -> Git_core_types.File_mode.Non_executable_file
+            | Executable_file -> Executable_file
+            | Link -> Link ))
       in
       let submodule_lines =
         Map.map submodules ~f:(fun sha1 -> sha1, Git_core_types.File_mode.Git_submodule)
       in
       let all_lines =
-        Map.merge directory_lines file_lines ~f:(fun ~key:name ->
-          function
+        Map.merge directory_lines file_lines ~f:(fun ~key:name -> function
           | `Both (dir, file) ->
             raise_s
               [%message
@@ -266,8 +265,7 @@ module Node = struct
                   (dir : Sha1.Hex.t * Git_core_types.File_mode.t)
                   (file : Sha1.Hex.t * Git_core_types.File_mode.t)]
           | `Left value | `Right value -> Some value)
-        |> Map.merge submodule_lines ~f:(fun ~key:name ->
-          function
+        |> Map.merge submodule_lines ~f:(fun ~key:name -> function
           | `Both (dir_or_file, submodule) ->
             raise_s
               [%message

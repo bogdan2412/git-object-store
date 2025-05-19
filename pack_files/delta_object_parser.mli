@@ -24,9 +24,9 @@ type ('Sha1_validation, _, _, _) t
 type 'Sha1_validation packed_result =
   | T :
       ( 'Sha1_validation
-      , [< `No_base | `Have_base ]
-      , [< `No_delta | `Have_delta ]
-      , [ `Have_result of [ `Object ] ] )
+        , [< `No_base | `Have_base ]
+        , [< `No_delta | `Have_delta ]
+        , [ `Have_result of [ `Object ] ] )
         t
       -> 'Sha1_validation packed_result
 
@@ -41,9 +41,9 @@ val create
 
 val reset
   :  ( 'Sha1_validation
-     , [< `No_base | `Have_base ]
-     , [< `No_delta | `Have_delta ]
-     , [< `No_result | `Computing_result of _ | `Have_result of _ ] )
+       , [< `No_base | `Have_base ]
+       , [< `No_delta | `Have_delta ]
+       , [< `No_result | `Computing_result of _ | `Have_result of _ ] )
        t
   -> ('Sha1_validation, [ `No_base ], [ `No_delta ], [ `No_result ]) t
 
@@ -88,9 +88,9 @@ val with_base_buffer_and_length
   -> length:int
   -> (('Sha1_validation, [ `Have_external_base ], 'delta, [ `No_result ]) t
       -> ( 'Sha1_validation
-         , [ `Have_external_base ]
-         , 'delta
-         , [ `Have_result of [ `Object ] ] )
+           , [ `Have_external_base ]
+           , 'delta
+           , [ `Have_result of [ `Object ] ] )
            t)
   -> ('Sha1_validation, 'base, 'delta, [ `Have_result of [ `Object ] ]) t
 
@@ -98,27 +98,27 @@ val with_base_buffer_and_length
     provided. *)
 val set_result_as_base
   :  ( 'Sha1_validation
-     , [< `No_base | `Have_base ]
-     , 'delta
-     , [ `Have_result of [ `Object ] ] )
+       , [< `No_base | `Have_base ]
+       , 'delta
+       , [ `Have_result of [ `Object ] ] )
        t
   -> ('Sha1_validation, [ `Have_base ], 'delta, [ `No_result ]) t
 
 (** Swap [result] and [delta] buffers. *)
 val set_result_as_delta
   :  ( 'Sha1_validation
-     , 'base
-     , [< `No_delta | `Have_delta ]
-     , [ `Have_result of [ `Delta ] ] )
+       , 'base
+       , [< `No_delta | `Have_delta ]
+       , [ `Have_result of [ `Delta ] ] )
        t
   -> ('Sha1_validation, 'base, [ `Have_delta ], [ `No_result ]) t
 
 (** Compute [result] buffer from [base] and [delta] buffers. *)
 val compute_result
   :  ( 'Sha1_validation
-     , ([< `Have_base | `Have_external_base ] as 'base)
-     , [ `Have_delta ]
-     , [ `No_result ] )
+       , ([< `Have_base | `Have_external_base ] as 'base)
+       , [ `Have_delta ]
+       , [ `No_result ] )
        t
   -> ('Sha1_validation, 'base, [ `Have_delta ], [ `Have_result of [ `Object ] ]) t
 

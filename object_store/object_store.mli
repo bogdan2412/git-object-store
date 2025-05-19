@@ -173,7 +173,7 @@ val all_unpacked_objects_in_store : _ t -> string Sha1.Hex.Table.t Deferred.t
 val all_objects_in_store : _ t -> Object_location.t list Sha1.Hex.Table.t Deferred.t
 
 module Packed : sig
-  type _ non_packed
+  type 'a non_packed := 'a t
   type t = T : _ non_packed -> t
 
   (** Create a unified reader that reads from the given [object_directory].
@@ -282,15 +282,10 @@ module Packed : sig
 
       The file will not necessarily persist after [f] is called as packed objects are written
       to a temporary file that is deleted after [f] is called. *)
-  val with_on_disk_file
-    :  t
-    -> Sha1.Hex.t
-    -> f:(string -> 'a Deferred.t)
-    -> 'a Deferred.t
+  val with_on_disk_file : t -> Sha1.Hex.t -> f:(string -> 'a Deferred.t) -> 'a Deferred.t
 
   module Object_location = Object_location
 
   val all_unpacked_objects_in_store : t -> string Sha1.Hex.Table.t Deferred.t
   val all_objects_in_store : t -> Object_location.t list Sha1.Hex.Table.t Deferred.t
 end
-with type 'a non_packed := 'a t

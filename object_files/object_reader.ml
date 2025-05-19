@@ -61,8 +61,8 @@ module Make (Parser : Parser) = struct
       then
         return
           (`Stop_consumed
-             ( Or_error.error_string "Unexpected extra data at the end of git object file"
-             , consumed ))
+              ( Or_error.error_string "Unexpected extra data at the end of git object file"
+              , consumed ))
       else (
         match%map push_back () with
         | `Ok -> `Continue
@@ -229,7 +229,8 @@ let%expect_test "file blob object" =
         ~contents:"x\001K\202\201OR04dH\203,*.QH\203\204I\229\002\000=7\006\020"
     in
     let%bind () = read_file t ~file () in
-    [%expect {|
+    [%expect
+      {|
       Blob size: 11
       Blob chunk: first file |}];
     let t = Expect_test_helpers.blob_reader Validate_sha1 in
@@ -263,7 +264,8 @@ let%expect_test "link blob object" =
       Writer.save file ~contents:"x\001K\202\201OR0fH\214O\001\000\017z\002\233"
     in
     let%bind () = read_file t ~file () in
-    [%expect {|
+    [%expect
+      {|
       Blob size: 3
       Blob chunk: c/d |}];
     Deferred.unit)

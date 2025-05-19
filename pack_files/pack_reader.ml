@@ -28,9 +28,9 @@ type 'Sha1_validation t =
   ; base_object_parser : 'Sha1_validation Base_object_parser.t
   ; delta_object_parser :
       ( 'Sha1_validation
-      , [ `No_base ]
-      , [ `No_delta ]
-      , [ `No_result ] )
+        , [ `No_base ]
+        , [ `No_delta ]
+        , [ `No_result ] )
         Delta_object_parser.t
   ; sha1_validation : 'Sha1_validation Sha1_validation.t
   ; index : Index_reader.t

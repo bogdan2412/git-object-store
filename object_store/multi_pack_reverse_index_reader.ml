@@ -74,14 +74,15 @@ let open_existing index =
           else Ok ()
         in
         let%bind () =
-          if not
-               (Bytes.equal
-                  (Sha1.Raw.Volatile.bytes
-                     (Multi_pack_index_reader.multi_pack_index_sha1 index))
-                  (Bigstring.To_bytes.sub
-                     file_mmap
-                     ~pos:(file_size - (Sha1.Raw.length * 2))
-                     ~len:Sha1.Raw.length))
+          if
+            not
+              (Bytes.equal
+                 (Sha1.Raw.Volatile.bytes
+                    (Multi_pack_index_reader.multi_pack_index_sha1 index))
+                 (Bigstring.To_bytes.sub
+                    file_mmap
+                    ~pos:(file_size - (Sha1.Raw.length * 2))
+                    ~len:Sha1.Raw.length))
           then
             Or_error.error_s
               [%sexp "SHA1 checksums do not match between index and reverse index files"]
@@ -156,7 +157,8 @@ let pseudo_pack_order_of_pack_id_and_offset t ~pack_id ~pack_offset =
   done;
   step := !step lsr 1;
   while !step >= 1 do
-    if let pseudo_pack_order = !pos + !step in
+    if
+      let pseudo_pack_order = !pos + !step in
       pseudo_pack_order <= binary_search_end
       && compare
            t
@@ -168,8 +170,9 @@ let pseudo_pack_order_of_pack_id_and_offset t ~pack_id ~pack_offset =
     then pos := !pos + !step;
     step := !step lsr 1
   done;
-  if pack_id_of_pseudo_pack_order t ~pseudo_pack_order:!pos = pack_id
-  && pack_offset_of_pseudo_pack_order t ~pseudo_pack_order:!pos = pack_offset
+  if
+    pack_id_of_pseudo_pack_order t ~pseudo_pack_order:!pos = pack_id
+    && pack_offset_of_pseudo_pack_order t ~pseudo_pack_order:!pos = pack_offset
   then !pos
   else
     raise_s

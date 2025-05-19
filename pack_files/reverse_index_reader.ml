@@ -63,13 +63,14 @@ let open_existing index =
         else Ok ()
       in
       let%bind () =
-        if not
-             (Bytes.equal
-                (Sha1.Raw.Volatile.bytes (Index_reader.pack_sha1 index))
-                (Bigstring.To_bytes.sub
-                   file_mmap
-                   ~pos:(file_size - (Sha1.Raw.length * 2))
-                   ~len:Sha1.Raw.length))
+        if
+          not
+            (Bytes.equal
+               (Sha1.Raw.Volatile.bytes (Index_reader.pack_sha1 index))
+               (Bigstring.To_bytes.sub
+                  file_mmap
+                  ~pos:(file_size - (Sha1.Raw.length * 2))
+                  ~len:Sha1.Raw.length))
         then
           Or_error.error_s
             [%sexp "SHA1 checksums do not match between index and reverse index files"]
@@ -112,8 +113,9 @@ let pack_order_of_pack_file_offset t ~pack_file_offset =
   done;
   step := !step lsr 1;
   while !step >= 1 do
-    if !pos + !step <= binary_search_end
-    && pack_file_offset_of_pack_order t ~pack_order:(!pos + !step) <= pack_file_offset
+    if
+      !pos + !step <= binary_search_end
+      && pack_file_offset_of_pack_order t ~pack_order:(!pos + !step) <= pack_file_offset
     then pos := !pos + !step;
     step := !step lsr 1
   done;

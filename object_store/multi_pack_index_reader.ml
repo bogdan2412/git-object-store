@@ -226,8 +226,9 @@ let open_existing ~pack_directory =
         else Ok ()
       in
       let%bind () =
-        if Bigstring.get_uint64_be_exn file_mmap ~pos:(12 + (chunk_count * 12) + 4)
-           <> file_size - Sha1.Raw.length
+        if
+          Bigstring.get_uint64_be_exn file_mmap ~pos:(12 + (chunk_count * 12) + 4)
+          <> file_size - Sha1.Raw.length
         then
           Or_error.error_s
             [%sexp "Expected last chunk offset to point to the file's footer Sha1"]
@@ -265,15 +266,16 @@ let open_existing ~pack_directory =
         (* At least 12 for the header, (chunk_count + 1) * 12 for chunk descriptions,
            256 * 4 for fan-out table, (Sha1.Raw.length + 8) for each object and
            Sha1.Raw.length for the footer. *)
-        if file_size
-           < 12
-             + ((chunk_count + 1) * 12)
-             + Chunks.pack_file_name_chunk_size chunks
-             + Chunks.fanout_chunk_size chunks
-             + Chunks.object_id_chunk_size chunks
-             + Chunks.object_offset_chunk_size chunks
-             + Chunks.large_object_offset_chunk_size chunks
-             + Sha1.Raw.length
+        if
+          file_size
+          < 12
+            + ((chunk_count + 1) * 12)
+            + Chunks.pack_file_name_chunk_size chunks
+            + Chunks.fanout_chunk_size chunks
+            + Chunks.object_id_chunk_size chunks
+            + Chunks.object_offset_chunk_size chunks
+            + Chunks.large_object_offset_chunk_size chunks
+            + Sha1.Raw.length
         then Or_error.error_s [%sexp "Index file impossibly small"]
         else Ok ()
       in

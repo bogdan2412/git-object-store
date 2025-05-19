@@ -636,8 +636,8 @@ let all_unpacked_objects_in_store t =
       let path = Filename.concat t.object_directory first_child in
       if String.( = ) first_child "info" || String.( = ) first_child "pack"
       then Deferred.unit
-      else if Int.( = ) (String.length first_child) 2
-           && String.for_all ~f:is_hex first_child
+      else if
+        Int.( = ) (String.length first_child) 2 && String.for_all ~f:is_hex first_child
       then (
         let%bind second_level = Sys.readdir path in
         Deferred.Array.iter second_level ~how:`Sequential ~f:(fun file ->

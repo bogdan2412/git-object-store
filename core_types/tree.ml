@@ -46,8 +46,9 @@ let[@inline] mode_byte_7_should_be_space (file_mode : File_mode.t) =
 ;;
 
 let[@inline] mode_bytes_match ~bytes_0_to_3 ~bytes_4_to_5 ~byte_7 file_mode =
-  if bytes_0_to_3 = mode_bytes_0_to_3 file_mode
-  && bytes_4_to_5 = mode_bytes_4_to_5 file_mode
+  if
+    bytes_0_to_3 = mode_bytes_0_to_3 file_mode
+    && bytes_4_to_5 = mode_bytes_4_to_5 file_mode
   then (
     if mode_byte_7_should_be_space file_mode then assert (Char.( = ) byte_7 ' ');
     true)
@@ -83,10 +84,9 @@ let[@inline] unsafe_parse_mode buf ~pos =
           let file_mode = File_mode.Git_submodule in
           if mode_bytes_match ~bytes_0_to_3 ~bytes_4_to_5 ~byte_7 file_mode
           then file_mode
-          else if (* Old repos sometimes use the now deprecated 100664 for Non_executable_file. *)
-            bytes_0_to_3 = 909127729
-            && bytes_4_to_5 = 13366
-            && Char.( = ) byte_7 ' '
+          else if
+            (* Old repos sometimes use the now deprecated 100664 for Non_executable_file. *)
+            bytes_0_to_3 = 909127729 && bytes_4_to_5 = 13366 && Char.( = ) byte_7 ' '
           then Non_executable_file
           else raise_s [%message "Invalid_tree_format"]))))
 ;;
@@ -97,7 +97,7 @@ module Git_object_payload_parser = struct
       { mutable walked_without_finding_null : int
       ; sha1 : Sha1.Raw.Volatile.t [@sexp_drop_if const true]
       ; emit_tree_line : File_mode.t -> Sha1.Raw.Volatile.t -> name:string -> unit
-                         [@sexp_drop_if const true]
+            [@sexp_drop_if const true]
       }
     [@@deriving fields, sexp_of]
 
@@ -118,8 +118,9 @@ module Git_object_payload_parser = struct
     do
       state.walked_without_finding_null <- state.walked_without_finding_null + 1
     done;
-    if state.walked_without_finding_null + 1 + Sha1.Raw.length <= len
-    && Char.( = ) (Bigstring.get buf (pos + state.walked_without_finding_null)) '\000'
+    if
+      state.walked_without_finding_null + 1 + Sha1.Raw.length <= len
+      && Char.( = ) (Bigstring.get buf (pos + state.walked_without_finding_null)) '\000'
     then (
       let mode = unsafe_parse_mode buf ~pos in
       let name_offset = mode_length mode in

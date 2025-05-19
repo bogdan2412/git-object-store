@@ -37,8 +37,9 @@ let open_existing ~pack_file ~pack_file_mmap ~pack_file_size ~items_in_pack =
         (* At least 4 for signature, 4 for version, 256 * 4 for fan-out table,
            one raw SHA1, one CRC32 and one offset for each item in the pack and
            two raw SHA1s *)
-        if file_size
-           < 1032 + (items_in_pack * (Sha1.Raw.length + 8)) + (2 * Sha1.Raw.length)
+        if
+          file_size
+          < 1032 + (items_in_pack * (Sha1.Raw.length + 8)) + (2 * Sha1.Raw.length)
         then Or_error.error_s [%sexp "Index file impossibly small"]
         else Ok ()
       in
@@ -53,13 +54,14 @@ let open_existing ~pack_file ~pack_file_mmap ~pack_file_size ~items_in_pack =
         else Ok ()
       in
       let%bind () =
-        if Bigstring.memcmp
-             file_mmap
-             ~pos1:(file_size - (Sha1.Raw.length * 2))
-             pack_file_mmap
-             ~pos2:(pack_file_size - Sha1.Raw.length)
-             ~len:Sha1.Raw.length
-           <> 0
+        if
+          Bigstring.memcmp
+            file_mmap
+            ~pos1:(file_size - (Sha1.Raw.length * 2))
+            pack_file_mmap
+            ~pos2:(pack_file_size - Sha1.Raw.length)
+            ~len:Sha1.Raw.length
+          <> 0
         then
           Or_error.error_s
             [%sexp "SHA1 checksums do not match between index and pack files"]

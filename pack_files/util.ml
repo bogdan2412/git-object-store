@@ -117,8 +117,9 @@ struct
     done;
     step := !step lsr 1;
     while !step >= Sha1.Raw.length do
-      if !pos + !step < stop
-      && sha1_greater_than_or_equal sha1m ~index_buf ~index_pos:(!pos + !step)
+      if
+        !pos + !step < stop
+        && sha1_greater_than_or_equal sha1m ~index_buf ~index_pos:(!pos + !step)
       then pos := !pos + !step;
       step := !step lsr 1
     done;

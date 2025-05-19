@@ -36,9 +36,9 @@ type ('Sha1_validation, _, _, _) t =
 type 'Sha1_validation packed_result =
   | T :
       ( 'Sha1_validation
-      , [< `No_base | `Have_base ]
-      , [< `No_delta | `Have_delta ]
-      , [ `Have_result of [ `Object ] ] )
+        , [< `No_base | `Have_base ]
+        , [< `No_delta | `Have_delta ]
+        , [ `Have_result of [ `Object ] ] )
         t
       -> 'Sha1_validation packed_result
 
@@ -151,11 +151,11 @@ let reset (t : ('Sha1_validation, _, _, _) t) =
 
 let set_result_as_base
       (t :
-         ( 'Sha1_validation
-         , [< `No_base | `Have_base ]
-         , 'delta
-         , [ `Have_result of [ `Object ] ] )
-           t)
+        ( 'Sha1_validation
+          , [< `No_base | `Have_base ]
+          , 'delta
+          , [ `Have_result of [ `Object ] ] )
+          t)
   =
   let temp = t.base_buf in
   t.base_buf <- t.result_buf;
@@ -168,11 +168,11 @@ let set_result_as_base
 
 let set_result_as_delta
       (t :
-         ( 'Sha1_validation
-         , 'base
-         , [< `No_delta | `Have_delta ]
-         , [ `Have_result of [ `Delta ] ] )
-           t)
+        ( 'Sha1_validation
+          , 'base
+          , [< `No_delta | `Have_delta ]
+          , [ `Have_result of [ `Delta ] ] )
+          t)
   =
   let temp = t.delta_buf in
   t.delta_buf <- t.result_buf;
@@ -236,9 +236,9 @@ let[@inline] with_base_buffer_and_length
       in
       let t
         : ( 'Sha1_validation
-          , [ `Have_external_base ]
-          , 'delta
-          , [ `Have_result of [ `Object ] ] )
+            , [ `Have_external_base ]
+            , 'delta
+            , [ `Have_result of [ `Object ] ] )
             t
         =
         f t
@@ -251,11 +251,11 @@ let[@inline] with_base_buffer_and_length
 
 let compute_result
       (t :
-         ( 'Sha1_validation
-         , ([< `Have_base | `Have_external_base ] as 'base)
-         , [ `Have_delta ]
-         , [ `No_result ] )
-           t)
+        ( 'Sha1_validation
+          , ([< `Have_base | `Have_external_base ] as 'base)
+          , [ `Have_delta ]
+          , [ `No_result ] )
+          t)
   =
   t.result_len <- 0;
   let pos = 0 in

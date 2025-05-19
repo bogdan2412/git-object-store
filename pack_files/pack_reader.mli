@@ -80,12 +80,12 @@ module Size : sig
     type t = private
       { mutable size : int (** [size] represents the size of the unpacked object. *)
       ; mutable delta_size : int
-      (** For objects that are stored in deltified representation relative to a
+        (** For objects that are stored in deltified representation relative to a
           different object, [delta_size] represents the size of that representation.
           For objects that are stored in undeltified representation, [delta_size]
           will just be equal to [size]. *)
       ; mutable pack_size : int
-      (** [pack_size] represents the size that the object occupies in the pack. *)
+        (** [pack_size] represents the size that the object occupies in the pack. *)
       }
   end
 end
@@ -95,10 +95,9 @@ end
 val size : _ t -> index:int -> Size.Volatile.t
 
 module Packed : sig
-  type _ non_packed
+  type 'a non_packed := 'a t
   type t = T : _ non_packed -> t
 end
-with type 'a non_packed := 'a t
 
 module Low_level : sig
   val index : _ t -> Index_reader.t

@@ -221,7 +221,7 @@ let index_objects =
 let compute_resulting_delta_object
       (type kind)
       (delta_object_parser :
-         (unit, [ `No_base ], [ `No_delta ], [ `No_result ]) Delta_object_parser.t)
+        (unit, [ `No_base ], [ `No_delta ], [ `No_result ]) Delta_object_parser.t)
       (pack_object_type : kind Pack_object_type.t)
       ~expected_length
       buf

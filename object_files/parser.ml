@@ -188,8 +188,9 @@ module Raw_kernel = struct
         done;
         if !pos <= max_pos
         then
-          if Char.( = ) (Bigstring.get t.buf !pos) '\000'
-          && !pos <> t.pos + from_offset + 1
+          if
+            Char.( = ) (Bigstring.get t.buf !pos) '\000'
+            && !pos <> t.pos + from_offset + 1
           then (
             on_length_read t ~payload_length:!length;
             pos := !pos + 1;
@@ -209,8 +210,9 @@ module Raw_kernel = struct
       else if Bigstring.get_uint32_le t.buf ~pos:t.pos = 1701147252
       then
         read_header_payload_length t ~from_offset:4 ~on_length_read:set_state_reading_tree
-      else if Bigstring.get_uint32_le t.buf ~pos:t.pos = 1835888483
-           && Bigstring.get_uint16_le t.buf ~pos:(t.pos + 4) = 29801
+      else if
+        Bigstring.get_uint32_le t.buf ~pos:t.pos = 1835888483
+        && Bigstring.get_uint16_le t.buf ~pos:(t.pos + 4) = 29801
       then
         read_header_payload_length
           t

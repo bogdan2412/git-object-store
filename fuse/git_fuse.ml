@@ -366,11 +366,11 @@ let () =
           { Fuse.default_operations with
             init =
               (fun () ->
-                 init
-                   ~git_directory
-                   ~branch
-                   ~stat_accurate_timestamps
-                   ~max_concurrent_reads)
+                init
+                  ~git_directory
+                  ~branch
+                  ~stat_accurate_timestamps
+                  ~max_concurrent_reads)
           ; fopen = wrap2 fopen "fopen"
           ; read = wrap4 read "read"
           ; release = wrap3 release "release"
